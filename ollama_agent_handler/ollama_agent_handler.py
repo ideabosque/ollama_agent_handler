@@ -97,7 +97,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                     messages.append(HumanMessage(content=input_message["content"]))
                 elif input_message["role"] == "assistant":
                     messages.append(AIMessage(content=input_message["content"]))
-                elif input_message["role"] == "tool":
+                elif input_message["role"] == self.agent["tool_call_role"]:
                     messages.append(ToolMessage(content=input_message["content"]))
 
             model = ChatOllama(**self.model_setting)
@@ -160,7 +160,9 @@ class OllamaEventHandler(AIAgentEventHandler):
                 self.model_setting.update(model_setting)
 
             timestamp = pendulum.now("UTC").int_timestamp
-            run_id = f"resp-{timestamp}-{str(uuid.uuid4())[:8]}"
+            run_id = (
+                f"run-{self.model_setting["model"]}-{timestamp}-{str(uuid.uuid4())[:8]}"
+            )
 
             response = self.invoke_model(
                 **{
@@ -407,6 +409,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             index=index,
             data_format=output_format,
         )
+        index += 1
 
         for chunk in response_stream:
             if not message_id:
