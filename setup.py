@@ -17,7 +17,6 @@ setup(
     platforms="Linux",
     install_requires=[
         "SilvaEngine-Utility",
-        "SilvaEngine-DynamoDB-Base",
         "AI-Agent-Handler",
         "langchain",
         "langchain-community",
