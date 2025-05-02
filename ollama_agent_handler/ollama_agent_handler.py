@@ -98,7 +98,14 @@ class OllamaEventHandler(AIAgentEventHandler):
                 elif input_message["role"] == "assistant":
                     messages.append(AIMessage(content=input_message["content"]))
                 elif input_message["role"] == self.agent["tool_call_role"]:
-                    messages.append(ToolMessage(content=input_message["content"]))
+                    tool_call_id = Utility.json_loads(input_message["content"])["tool"][
+                        "id"
+                    ]
+                    messages.append(
+                        ToolMessage(
+                            tool_call_id=tool_call_id, content=input_message["content"]
+                        )
+                    )
 
             model = ChatOllama(**self.model_setting)
             model_with_tools: Runnable = model.bind_tools(self.tools)
@@ -230,6 +237,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                             "content": Utility.json_dumps(
                                 {
                                     "tool": {
+                                        "id": function_call_data["id"],
                                         "tool_type": function_call_data["type"],
                                         "name": function_call_data["name"],
                                         "arguments": arguments,
