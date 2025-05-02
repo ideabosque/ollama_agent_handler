@@ -99,7 +99,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                     messages.append(AIMessage(content=input_message["content"]))
                 elif input_message["role"] == self.agent["tool_call_role"]:
                     tool_call_id = Utility.json_loads(input_message["content"])["tool"][
-                        "id"
+                        "tool_call_id"
                     ]
                     messages.append(
                         ToolMessage(
@@ -237,7 +237,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                             "content": Utility.json_dumps(
                                 {
                                     "tool": {
-                                        "id": function_call_data["id"],
+                                        "tool_call_id": function_call_data["id"],
                                         "tool_type": function_call_data["type"],
                                         "name": function_call_data["name"],
                                         "arguments": arguments,
