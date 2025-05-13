@@ -64,7 +64,6 @@ class OllamaEventHandler(AIAgentEventHandler):
         """
         AIAgentEventHandler.__init__(self, logger, agent, **setting)
 
-        self.logger = logger
         self.system_message = SystemMessage(content=agent["instructions"])
         self.model_setting = {
             k: float(v) if isinstance(v, Decimal) else v
