@@ -182,7 +182,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                 self.handle_stream(response, stream_event=stream_event)
                 return None
 
-            self.handle_output(response)
+            self.handle_response(response)
             return run_id
         except Exception as e:
             self.logger.error(f"Error in ask_model: {str(e)}")
@@ -365,27 +365,27 @@ class OllamaEventHandler(AIAgentEventHandler):
             )
             return f"Function execution failed: {e}"
 
-    def handle_output(
+    def handle_response(
         self,
-        output: Any,
+        response: Any,
     ) -> None:
         """
         Processes non-streaming model output
 
         Args:
-            output: Model response object
+            response: Model response object
         """
-        self.logger.info("Processing output: %s", output)
+        self.logger.info("Processing output: %s", response)
 
         self.final_output = {
-            "message_id": output.id,
+            "message_id": response.id,
             "role": "assistant",
-            "content": output.content,
+            "content": response.content,
         }
 
     def handle_stream(
         self,
-        response_stream,
+        response_stream: Any,
         stream_event: threading.Event = None,
     ) -> None:
         """
