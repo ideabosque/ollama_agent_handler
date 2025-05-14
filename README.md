@@ -8,6 +8,8 @@ This handler enables a **stateless, multi-turn AI orchestration** system built t
 
 ## 🖉 Inheritance
 
+![AI Agent Event Handler Class Diagram](/images/ai_agent_event_handler_class_diagram.jpg)
+
 ```
 AIAgentEventHandler
      ▲
@@ -94,7 +96,6 @@ def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
   "tool_call_role": "developer",
 }
 ```
----
 
 ---
 ## 💬 Full-Scale Chatbot Scripts
