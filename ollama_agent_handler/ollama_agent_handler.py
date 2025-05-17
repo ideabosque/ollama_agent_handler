@@ -412,7 +412,7 @@ class OllamaEventHandler(AIAgentEventHandler):
         )
         index = 0
 
-        self.send_data_to_websocket(
+        self.send_data_to_stream(
             index=index,
             data_format=output_format,
         )
@@ -441,7 +441,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                 if len(accumulated_partial_text) >= int(
                     self.setting.get("accumulated_partial_text_buffer", "10")
                 ):
-                    self.send_data_to_websocket(
+                    self.send_data_to_stream(
                         index=index,
                         data_format=output_format,
                         chunk_delta=accumulated_partial_text,
@@ -450,7 +450,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                     index += 1
 
         if len(accumulated_partial_text) > 0:
-            self.send_data_to_websocket(
+            self.send_data_to_stream(
                 index=index,
                 data_format=output_format,
                 chunk_delta=accumulated_partial_text,
@@ -458,7 +458,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             accumulated_partial_text = ""
             index += 1
 
-        self.send_data_to_websocket(
+        self.send_data_to_stream(
             index=index,
             data_format=output_format,
             is_message_end=True,
