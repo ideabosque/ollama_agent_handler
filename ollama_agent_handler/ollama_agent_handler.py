@@ -437,8 +437,29 @@ class OllamaEventHandler(AIAgentEventHandler):
             else:
                 self.accumulated_text += chunk.content
                 accumulated_partial_text += chunk.content
-                # Send incremental text chunk to WebSocket server
-                if len(accumulated_partial_text) >= int(
+                # Check if text contains XML-style tags and update format
+                if "<" in accumulated_partial_text:
+                    output_format = "xml"
+                    # Wait for closing tag before sending, with max buffer size check
+                    if (
+                        ">" in accumulated_partial_text
+                        or len(accumulated_partial_text) > 500
+                    ):
+                        # If no closing tag found within buffer limit, treat as regular text
+                        if (
+                            ">" not in accumulated_partial_text
+                            and len(accumulated_partial_text) > 500
+                        ):
+                            output_format = "text"
+                        self.send_data_to_stream(
+                            index=index,
+                            data_format=output_format,
+                            chunk_delta=accumulated_partial_text,
+                        )
+                        accumulated_partial_text = ""
+                        index += 1
+                # For non-XML content, use buffer threshold
+                elif len(accumulated_partial_text) >= int(
                     self.setting.get("accumulated_partial_text_buffer", "10")
                 ):
                     self.send_data_to_stream(
