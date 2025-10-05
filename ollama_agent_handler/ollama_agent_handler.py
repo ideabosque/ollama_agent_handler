@@ -474,7 +474,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                     accumulated_tool_calls.append(tool_call)
 
             # Get the content from the chunk
-            chunk_content = message.get("content", "")
+            chunk_content = message.get("content")
 
             # Skip empty chunks
             if not chunk_content:
