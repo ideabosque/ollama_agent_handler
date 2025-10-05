@@ -489,6 +489,9 @@ class OllamaEventHandler(AIAgentEventHandler):
                     index, accumulated_partial_text, output_format
                 )
 
+            # Print out for stream.
+            print(chunk_content, end="", flush=True)
+
         if len(accumulated_partial_text) > 0:
             self.send_data_to_stream(
                 index=index,
