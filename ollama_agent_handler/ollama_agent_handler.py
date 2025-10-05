@@ -218,16 +218,12 @@ class OllamaEventHandler(AIAgentEventHandler):
                 f"[handle_function_call] Executing function {function_call_data['name']} with arguments {arguments}"
             )
             function_output = self._execute_function(function_call_data, arguments)
-            content = Utility.json_dumps(
-                {
-                    "tool": {
-                        "tool_call_id": function_call_data["id"],
-                        "tool_type": function_call_data["type"],
-                        "name": function_call_data["name"],
-                        "arguments": arguments,
-                    },
-                    "output": function_output,
-                }
+            # Update conversation history
+            self.logger.info(
+                f"[handle_function_call][{function_call_data['name']}] Updating conversation history"
+            )
+            self._update_conversation_history(
+                function_call_data, function_output, input_messages
             )
 
             if self._run is None:
@@ -235,27 +231,22 @@ class OllamaEventHandler(AIAgentEventHandler):
                     {
                         "message": {
                             "role": self.agent["tool_call_role"],
-                            "content": content,
+                            "content": Utility.json_dumps(
+                                {
+                                    "tool": {
+                                        "tool_call_id": function_call_data["id"],
+                                        "tool_type": function_call_data["type"],
+                                        "name": function_call_data["name"],
+                                        "arguments": arguments,
+                                    },
+                                    "output": function_output,
+                                }
+                            ),
                         },
                         "created_at": pendulum.now("UTC"),
                     }
                 )
 
-            # Return in Ollama's tool message format
-            # Append tool result in Ollama format with "tool" role
-            # Ensure content is a JSON string
-            content = (
-                Utility.json_dumps(function_output)
-                if not isinstance(function_output, str)
-                else function_output
-            )
-            input_messages.append(
-                {
-                    "role": "tool",
-                    "content": content,
-                    "tool_name": function_call_data["name"],
-                }
-            )
             return input_messages
 
         except Exception as e:
@@ -369,6 +360,38 @@ class OllamaEventHandler(AIAgentEventHandler):
                 },
             )
             return f"Function execution failed: {e}"
+
+    def _update_conversation_history(
+        self,
+        function_call_data: Dict[str, Any],
+        function_output: Any,
+        input_messages: List[Dict[str, Any]],
+    ) -> None:
+        """
+        Updates the conversation history with function call results.
+        Formats and appends function output as a user message.
+
+        Args:
+            function_call_data: Metadata about the executed function
+            function_output: Result from function execution
+            input_messages: Current conversation history to update
+        """
+
+        # Return in Ollama's tool message format
+        # Append tool result in Ollama format with "tool" role
+        # Ensure content is a JSON string
+        content = (
+            Utility.json_dumps(function_output)
+            if not isinstance(function_output, str)
+            else function_output
+        )
+        input_messages.append(
+            {
+                "role": self.agent["tool_call_role"],
+                "content": content,
+                "tool_name": function_call_data["name"],
+            }
+        )
 
     def handle_response(
         self,
