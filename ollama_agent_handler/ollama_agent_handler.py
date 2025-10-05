@@ -12,27 +12,11 @@ from decimal import Decimal
 from queue import Queue
 from typing import Any, Dict, List, Optional
 
+import ollama
 import pendulum
-from langchain.callbacks.base import BaseCallbackHandler
-from langchain_core.messages import (
-    AIMessage,
-    AIMessageChunk,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
-from langchain_core.runnables import Runnable
-from langchain_ollama import ChatOllama
 
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import Utility
-
-
-class PrintStreamingCallback(BaseCallbackHandler):
-    """Callback handler that prints streaming tokens to stdout"""
-
-    def on_llm_new_token(self, token: str, **kwargs) -> None:
-        print(token, end="", flush=True)
 
 
 # ----------------------------
@@ -64,16 +48,15 @@ class OllamaEventHandler(AIAgentEventHandler):
         """
         AIAgentEventHandler.__init__(self, logger, agent, **setting)
 
-        self.system_message = SystemMessage(content=agent["instructions"])
+        self.system_message = {"role": "system", "content": agent["instructions"]}
         self.model_setting = {
             k: float(v) if isinstance(v, Decimal) else v
             for k, v in agent["configuration"].items()
-            if k not in ["tools", "text"]
         }
-
-        self.tools = []
-        for tool in agent["configuration"].get("tools", []):
-            self.tools.append(self.get_class(tool["module_name"], tool["class_name"]))
+        self.client = ollama.Client(
+            host=self.model_setting.get("base_url"),
+            headers=self.model_setting.get("headers", {}),
+        )
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
@@ -91,47 +74,91 @@ class OllamaEventHandler(AIAgentEventHandler):
         try:
             messages = []
             messages.append(self.system_message)
+
             for input_message in kwargs.get("input_messages"):
                 if input_message["role"] == "user":
-                    messages.append(HumanMessage(content=input_message["content"]))
-                elif input_message["role"] == "assistant":
-                    messages.append(AIMessage(content=input_message["content"]))
-                elif input_message["role"] == self.agent["tool_call_role"]:
-                    tool_call_id = Utility.json_loads(input_message["content"])["tool"][
-                        "tool_call_id"
-                    ]
                     messages.append(
-                        ToolMessage(
-                            tool_call_id=tool_call_id, content=input_message["content"]
-                        )
+                        {"role": "user", "content": input_message["content"]}
+                    )
+                elif input_message["role"] == "assistant":
+                    messages.append(
+                        {"role": "assistant", "content": input_message["content"]}
+                    )
+                elif input_message["role"] == self.agent["tool_call_role"]:
+                    # Convert tool message to Ollama format
+                    tool_data = Utility.json_loads(input_message["content"])
+                    messages.append(
+                        {
+                            "role": input_message["role"],
+                            "content": tool_data["output"],
+                            "tool_name": tool_data["tool"]["name"],
+                        }
                     )
 
-            model = ChatOllama(**self.model_setting)
-            model_with_tools: Runnable = model.bind_tools(self.tools)
+            # Prepare chat parameters
+            chat_params = {
+                "model": self.model_setting.get("model"),
+                "messages": messages,
+            }
 
-            response = model_with_tools.invoke(messages)
-            if hasattr(response, "tool_calls") and len(response.tool_calls) > 0:
-                tool_messages = []
-                for tool_call in response.tool_calls:
-                    tool_message = self.handle_function_call(tool_call)
-                    tool_messages.append(tool_message)
+            # Add optional parameters in the 'options' dict (Ollama format)
+            options = {}
+            if "temperature" in self.model_setting:
+                options["temperature"] = self.model_setting["temperature"]
+            if "top_p" in self.model_setting:
+                options["top_p"] = self.model_setting["top_p"]
+            if "num_predict" in self.model_setting:
+                options["num_predict"] = self.model_setting["num_predict"]
 
-                # Follow-up round
-                messages = (
-                    messages
-                    + [
-                        AIMessage(
-                            content=response.content, tool_calls=response.tool_calls
-                        )
-                    ]
-                    + tool_messages
-                )
+            if options:
+                chat_params["options"] = options
 
-            if not kwargs["stream"]:
-                return model.invoke(messages)
+            # Add tools if available
+            if "tools" in self.model_setting:
+                chat_params["tools"] = self.model_setting["tools"]
 
-            callback = PrintStreamingCallback()
-            return model.stream(messages, config={"callbacks": [callback]})
+            # Add format option if specified
+            text_config = self.model_setting.get("text", {})
+            format_config = text_config.get("format", {})
+            format_type = format_config.get("type", "text")
+
+            if format_type == "json_object":
+                chat_params["format"] = "json"
+            elif format_type == "json_schema":
+                # Ollama supports json schema format
+                if "schema" in format_config:
+                    chat_params["format"] = format_config["schema"]
+
+            # First call to check for tool calls
+            if "tools" in chat_params:
+                response = self.client.chat(**chat_params)
+
+                # Handle tool calls if present
+                if "message" in response and "tool_calls" in response["message"]:
+                    tool_calls = response["message"]["tool_calls"]
+                    if tool_calls and len(tool_calls) > 0:
+                        # Process all tool calls
+                        for tool_call in tool_calls:
+                            tool_result = self.handle_function_call(tool_call)
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": response["message"].get("content", ""),
+                                    "tool_calls": tool_calls,
+                                }
+                            )
+                            messages.append(tool_result)
+
+                        # Update messages for follow-up
+                        chat_params["messages"] = messages
+
+            # Final call (streaming or non-streaming)
+            if kwargs["stream"]:
+                chat_params["stream"] = True
+                return self.client.chat(**chat_params)
+            else:
+                return self.client.chat(**chat_params)
+
         except Exception as e:
             self.logger.error(f"Error invoking model: {str(e)}")
             raise Exception(f"Failed to invoke model: {str(e)}")
@@ -189,31 +216,33 @@ class OllamaEventHandler(AIAgentEventHandler):
             self.logger.error(f"Error in ask_model: {str(e)}")
             raise Exception(f"Failed to process model request: {str(e)}")
 
-    def handle_function_call(self, tool_call: Dict[str, any]) -> ToolMessage:
+    def handle_function_call(self, tool_call: Dict[str, any]) -> Dict[str, Any]:
         """
         Processes and executes tool/function calls from model responses
 
         Args:
-            tool_call: Tool call data from model response
+            tool_call: Tool call data from model response (Ollama format)
 
         Returns:
-            ToolMessage containing function execution results
+            Dict containing function execution results in Ollama's tool message format
 
         Raises:
             ValueError: For invalid tool calls
             Exception: For function execution failures
         """
-        if not "id" in tool_call:
-            raise ValueError("Invalid tool_call object")
+        # Ollama format: {"function": {"name": "...", "arguments": {...}}}
+        if "function" not in tool_call:
+            raise ValueError("Invalid tool_call object: missing 'function' key")
+
+        function_info = tool_call["function"]
+        function_call_data = {
+            "id": str(uuid.uuid4()),  # Generate ID if not provided
+            "arguments": function_info.get("arguments", {}),
+            "type": "function",
+            "name": function_info["name"],
+        }
 
         try:
-            function_call_data = {
-                "id": tool_call["id"],
-                "arguments": tool_call["args"],
-                "type": tool_call["type"],
-                "name": tool_call["name"],
-            }
-
             self.logger.info(
                 f"[handle_function_call] Starting function call recording for {function_call_data['name']}"
             )
@@ -228,31 +257,34 @@ class OllamaEventHandler(AIAgentEventHandler):
                 f"[handle_function_call] Executing function {function_call_data['name']} with arguments {arguments}"
             )
             function_output = self._execute_function(function_call_data, arguments)
+            content = Utility.json_dumps(
+                {
+                    "tool": {
+                        "tool_call_id": function_call_data["id"],
+                        "tool_type": function_call_data["type"],
+                        "name": function_call_data["name"],
+                        "arguments": arguments,
+                    },
+                    "output": function_output,
+                }
+            )
 
             if self._run is None:
                 self._short_term_memory.append(
                     {
                         "message": {
                             "role": self.agent["tool_call_role"],
-                            "content": Utility.json_dumps(
-                                {
-                                    "tool": {
-                                        "tool_call_id": function_call_data["id"],
-                                        "tool_type": function_call_data["type"],
-                                        "name": function_call_data["name"],
-                                        "arguments": arguments,
-                                    },
-                                    "output": function_output,
-                                }
-                            ),
+                            "content": content,
                         },
                         "created_at": pendulum.now("UTC"),
                     }
                 )
 
-            return ToolMessage(
-                tool_call_id=function_call_data["id"], content=str(function_output)
-            )
+            # Return in Ollama's tool message format
+            return {
+                "role": self.agent["tool_call_role"],
+                "content": content,
+            }
 
         except Exception as e:
             self.logger.error(f"Error in handle_function_call: {e}")
@@ -374,14 +406,18 @@ class OllamaEventHandler(AIAgentEventHandler):
         Processes non-streaming model output
 
         Args:
-            response: Model response object
+            response: Model response object (Ollama format)
         """
         self.logger.info("Processing output: %s", response)
 
+        # Ollama response format: {"message": {"role": "assistant", "content": "..."}, "model": "...", ...}
+        message = response.get("message", {})
+        # Generate a unique message ID since Ollama doesn't provide one
+        message_id = f"msg-{pendulum.now('UTC').int_timestamp}-{str(uuid.uuid4())[:8]}"
         self.final_output = {
-            "message_id": response.id,
-            "role": "assistant",
-            "content": response.content,
+            "message_id": message_id,
+            "role": message.get("role", "assistant"),
+            "content": message.get("content", ""),
         }
 
     def handle_stream(
@@ -393,7 +429,7 @@ class OllamaEventHandler(AIAgentEventHandler):
         Processes streaming model responses chunk by chunk
 
         Args:
-            response_stream: Iterator of response chunks
+            response_stream: Iterator of response chunks (Ollama format)
             stream_event: Event to signal completion
 
         Handles:
@@ -420,13 +456,23 @@ class OllamaEventHandler(AIAgentEventHandler):
         index += 1
 
         for chunk in response_stream:
+            # Ollama streaming format: {"message": {"role": "assistant", "content": "..."}, "done": false, ...}
+            # Generate message_id on first chunk
             if not message_id:
-                message_id = chunk.id
-            if not isinstance(chunk, AIMessageChunk):
+                message_id = (
+                    f"msg-{pendulum.now('UTC').int_timestamp}-{str(uuid.uuid4())[:8]}"
+                )
+
+            # Get the content from the chunk
+            message = chunk.get("message", {})
+            chunk_content = message.get("content", "")
+
+            # Skip empty chunks
+            if not chunk_content:
                 continue
 
             if output_format in ["json_object", "json_schema"]:
-                accumulated_partial_json += chunk.content
+                accumulated_partial_json += chunk_content
                 index, self.accumulated_text, accumulated_partial_json = (
                     self.process_and_send_json(
                         index,
@@ -436,8 +482,8 @@ class OllamaEventHandler(AIAgentEventHandler):
                     )
                 )
             else:
-                self.accumulated_text += chunk.content
-                accumulated_partial_text += chunk.content
+                self.accumulated_text += chunk_content
+                accumulated_partial_text += chunk_content
                 # Check if text contains XML-style tags and update format
                 index, accumulated_partial_text = self.process_text_content(
                     index, accumulated_partial_text, output_format
@@ -459,7 +505,11 @@ class OllamaEventHandler(AIAgentEventHandler):
         )
 
         self.final_output = {
-            "message_id": message_id,
+            "message_id": (
+                message_id
+                if message_id
+                else f"msg-{pendulum.now('UTC').int_timestamp}-{str(uuid.uuid4())[:8]}"
+            ),
             "role": "assistant",
             "content": self.accumulated_text,
         }

@@ -18,9 +18,7 @@ setup(
     install_requires=[
         "SilvaEngine-Utility",
         "AI-Agent-Handler",
-        "langchain",
-        "langchain-community",
-        "langchain-ollama",
+        "ollama",
     ],
     classifiers=[
         "Programming Language :: Python",
