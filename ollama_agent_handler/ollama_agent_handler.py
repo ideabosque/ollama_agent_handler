@@ -152,6 +152,54 @@ class OllamaEventHandler(AIAgentEventHandler):
             if model_setting:
                 self.model_setting.update(model_setting)
 
+            # Clean up any tool call/result pairs that are not followed by an assistant response
+            # This happens when a new user message is added after a previous tool call cycle
+            # We need to ensure the conversation ends with a complete assistant response before the new user message
+            self.logger.info(f"[ask_model] Before cleanup, input_messages has {len(input_messages)} messages")
+            for idx, msg in enumerate(input_messages):
+                content_preview = str(msg.get('content', ''))[:50] if msg.get('content') else 'None'
+                self.logger.info(f"  Message {idx}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}, content={content_preview}")
+
+            cleaned_messages = []
+            i = 0
+            temp_messages = input_messages.copy()  # Work on a copy to avoid modifying the original during recursive calls
+            while i < len(temp_messages):
+                msg = temp_messages[i]
+
+                # Check if this is an orphaned tool message (tool message without preceding assistant with tool_calls)
+                if msg.get("role") == self.agent["tool_call_role"]:
+                    # Check if previous message was assistant with tool_calls
+                    if i == 0 or not (cleaned_messages[-1].get("role") == "assistant" and "tool_calls" in cleaned_messages[-1]):
+                        self.logger.info(f"[ask_model] Removing orphaned tool message at index {i}")
+                        i += 1
+                        continue
+
+                # Check if this is an assistant message with tool_calls
+                if msg.get("role") == "assistant" and "tool_calls" in msg:
+                    # Look ahead to see if there's a final assistant response after tool results
+                    j = i + 1
+                    # Skip all tool result messages
+                    while j < len(temp_messages) and temp_messages[j].get("role") == self.agent["tool_call_role"]:
+                        j += 1
+
+                    # If next message is user or end of messages, we have incomplete tool cycle
+                    # Skip the assistant message with tool_calls and its tool results
+                    if j >= len(temp_messages) or temp_messages[j].get("role") == "user":
+                        self.logger.info(f"[ask_model] Removing incomplete tool cycle from index {i} to {j-1}")
+                        # Skip this assistant message and all following tool results
+                        i = j
+                        continue
+
+                # Keep this message
+                cleaned_messages.append(msg)
+                i += 1
+
+            input_messages = cleaned_messages
+
+            self.logger.info(f"[ask_model] After cleanup, input_messages has {len(input_messages)} messages")
+            for idx, msg in enumerate(input_messages):
+                self.logger.info(f"  Message {idx}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}")
+
             timestamp = pendulum.now("UTC").int_timestamp
             run_id = (
                 f"run-{self.model_setting["model"]}-{timestamp}-{str(uuid.uuid4())[:8]}"
@@ -534,7 +582,13 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         # Handle accumulated tool calls after streaming completes
         if accumulated_tool_calls:
-            # First, append the assistant's message with tool_calls
+            self.logger.info(f"[handle_stream] Processing tool calls, input_messages has {len(input_messages)} messages")
+
+            # Validate message history before appending
+            for i, msg in enumerate(input_messages):
+                self.logger.info(f"  Message {i}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}")
+
+            # Append the assistant's message with tool_calls
             input_messages.append(
                 {
                     "role": "assistant",
@@ -546,6 +600,10 @@ class OllamaEventHandler(AIAgentEventHandler):
             # Then, append tool results
             for tool_call in accumulated_tool_calls:
                 input_messages = self.handle_function_call(tool_call, input_messages)
+
+            self.logger.info(f"[handle_stream] Before recursive call, input_messages has {len(input_messages)} messages")
+            for i, msg in enumerate(input_messages):
+                self.logger.info(f"  Message {i}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}")
 
             # Make follow-up streaming call with tool results
             # Note: Recursive call will handle its own stream_event and final_output
