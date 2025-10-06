@@ -58,7 +58,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             headers=self.model_setting.get("headers", {}),
         )
 
-    def _cleanup_input_messages(self, input_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _cleanup_input_messages(
+        self, input_messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """
         Clean up any tool call/result pairs that are not followed by an assistant response.
         This happens when a new user message is added after a previous tool call cycle.
@@ -70,22 +72,35 @@ class OllamaEventHandler(AIAgentEventHandler):
         Returns:
             Cleaned list of messages
         """
-        self.logger.info(f"[_cleanup_input_messages] Before cleanup, input_messages has {len(input_messages)} messages")
+        self.logger.info(
+            f"[_cleanup_input_messages] Before cleanup, input_messages has {len(input_messages)} messages"
+        )
         for idx, msg in enumerate(input_messages):
-            content_preview = str(msg.get('content', ''))[:50] if msg.get('content') else 'None'
-            self.logger.info(f"  Message {idx}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}, content={content_preview}")
+            content_preview = (
+                str(msg.get("content", ""))[:50] if msg.get("content") else "None"
+            )
+            self.logger.info(
+                f"  Message {idx}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}, content={content_preview}"
+            )
 
         cleaned_messages = []
         i = 0
-        temp_messages = input_messages.copy()  # Work on a copy to avoid modifying the original during recursive calls
+        temp_messages = (
+            input_messages.copy()
+        )  # Work on a copy to avoid modifying the original during recursive calls
         while i < len(temp_messages):
             msg = temp_messages[i]
 
             # Check if this is an orphaned tool message (tool message without preceding assistant with tool_calls)
             if msg.get("role") == self.agent["tool_call_role"]:
                 # Check if previous message was assistant with tool_calls
-                if i == 0 or not (cleaned_messages[-1].get("role") == "assistant" and "tool_calls" in cleaned_messages[-1]):
-                    self.logger.info(f"[_cleanup_input_messages] Removing orphaned tool message at index {i}")
+                if i == 0 or not (
+                    cleaned_messages[-1].get("role") == "assistant"
+                    and "tool_calls" in cleaned_messages[-1]
+                ):
+                    self.logger.info(
+                        f"[_cleanup_input_messages] Removing orphaned tool message at index {i}"
+                    )
                     i += 1
                     continue
 
@@ -94,13 +109,18 @@ class OllamaEventHandler(AIAgentEventHandler):
                 # Look ahead to see if there's a final assistant response after tool results
                 j = i + 1
                 # Skip all tool result messages
-                while j < len(temp_messages) and temp_messages[j].get("role") == self.agent["tool_call_role"]:
+                while (
+                    j < len(temp_messages)
+                    and temp_messages[j].get("role") == self.agent["tool_call_role"]
+                ):
                     j += 1
 
                 # If next message is user or end of messages, we have incomplete tool cycle
                 # Skip the assistant message with tool_calls and its tool results
                 if j >= len(temp_messages) or temp_messages[j].get("role") == "user":
-                    self.logger.info(f"[_cleanup_input_messages] Removing incomplete tool cycle from index {i} to {j-1}")
+                    self.logger.info(
+                        f"[_cleanup_input_messages] Removing incomplete tool cycle from index {i} to {j-1}"
+                    )
                     # Skip this assistant message and all following tool results
                     i = j
                     continue
@@ -109,9 +129,13 @@ class OllamaEventHandler(AIAgentEventHandler):
             cleaned_messages.append(msg)
             i += 1
 
-        self.logger.info(f"[_cleanup_input_messages] After cleanup, input_messages has {len(cleaned_messages)} messages")
+        self.logger.info(
+            f"[_cleanup_input_messages] After cleanup, input_messages has {len(cleaned_messages)} messages"
+        )
         for idx, msg in enumerate(cleaned_messages):
-            self.logger.info(f"  Message {idx}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}")
+            self.logger.info(
+                f"  Message {idx}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}"
+            )
 
         return cleaned_messages
 
@@ -601,7 +625,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                     "tool_calls": accumulated_tool_calls,
                 }
             )
-            
+
             # Then, append tool results
             for tool_call in accumulated_tool_calls:
                 input_messages = self.handle_function_call(tool_call, input_messages)
