@@ -72,7 +72,9 @@ class OllamaEventHandler(AIAgentEventHandler):
         Returns:
             Filtered messages containing only valid sequences
         """
-        self.logger.info(f"[_cleanup_input_messages] Cleaning {len(input_messages)} messages")
+        self.logger.info(
+            f"[_cleanup_input_messages] Cleaning {len(input_messages)} messages"
+        )
 
         result = []
         position = 0
@@ -89,7 +91,9 @@ class OllamaEventHandler(AIAgentEventHandler):
                     and "tool_calls" in result[-1]
                 )
                 if not previous_is_tool_caller:
-                    self.logger.info(f"[_cleanup_input_messages] Skipping orphaned tool at [{position}]")
+                    self.logger.info(
+                        f"[_cleanup_input_messages] Skipping orphaned tool at [{position}]"
+                    )
                     position += 1
                     continue
 
@@ -110,7 +114,9 @@ class OllamaEventHandler(AIAgentEventHandler):
                     or input_messages[next_position].get("role") == "user"
                 )
                 if sequence_incomplete:
-                    self.logger.info(f"[_cleanup_input_messages] Skipping incomplete cycle [{position}:{next_position - 1}]")
+                    self.logger.info(
+                        f"[_cleanup_input_messages] Skipping incomplete cycle [{position}:{next_position - 1}]"
+                    )
                     position = next_position
                     continue
 
@@ -155,9 +161,12 @@ class OllamaEventHandler(AIAgentEventHandler):
                 options["top_p"] = self.model_setting["top_p"]
             if "num_predict" in self.model_setting:
                 options["num_predict"] = self.model_setting["num_predict"]
-
-            if options:
-                chat_params["options"] = options
+            if "top_k" in self.model_setting:
+                options["top_k"] = self.model_setting["top_k"]
+            if "repeat_penalty" in self.model_setting:
+                options["repeat_penalty"] = self.model_setting["repeat_penalty"]
+            if "num_ctx" in self.model_setting:
+                options["num_ctx"] = self.model_setting["num_ctx"]
 
             # Add tools if available
             if "tools" in self.model_setting:
