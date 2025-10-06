@@ -62,82 +62,64 @@ class OllamaEventHandler(AIAgentEventHandler):
         self, input_messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Clean up any tool call/result pairs that are not followed by an assistant response.
-        This happens when a new user message is added after a previous tool call cycle.
-        We need to ensure the conversation ends with a complete assistant response before the new user message.
+        Filters out broken tool interaction sequences from message history.
+        Valid sequences: assistant (with tool_calls) → tool results → assistant (final response).
+        Removes tool results without proper initiation or sequences without completion.
 
         Args:
-            input_messages: List of conversation messages
+            input_messages: Raw conversation messages
 
         Returns:
-            Cleaned list of messages
+            Filtered messages containing only valid sequences
         """
-        self.logger.info(
-            f"[_cleanup_input_messages] Before cleanup, input_messages has {len(input_messages)} messages"
-        )
-        for idx, msg in enumerate(input_messages):
-            content_preview = (
-                str(msg.get("content", ""))[:50] if msg.get("content") else "None"
-            )
-            self.logger.info(
-                f"  Message {idx}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}, content={content_preview}"
-            )
+        self.logger.info(f"[_cleanup_input_messages] Cleaning {len(input_messages)} messages")
 
-        cleaned_messages = []
-        i = 0
-        temp_messages = (
-            input_messages.copy()
-        )  # Work on a copy to avoid modifying the original during recursive calls
-        while i < len(temp_messages):
-            msg = temp_messages[i]
+        result = []
+        position = 0
 
-            # Check if this is an orphaned tool message (tool message without preceding assistant with tool_calls)
-            if msg.get("role") == self.agent["tool_call_role"]:
-                # Check if previous message was assistant with tool_calls
-                if i == 0 or not (
-                    cleaned_messages[-1].get("role") == "assistant"
-                    and "tool_calls" in cleaned_messages[-1]
-                ):
-                    self.logger.info(
-                        f"[_cleanup_input_messages] Removing orphaned tool message at index {i}"
-                    )
-                    i += 1
+        while position < len(input_messages):
+            current_msg = input_messages[position]
+            current_role = current_msg.get("role")
+
+            # Skip tool results that don't follow an assistant message with tool_calls
+            if current_role == self.agent["tool_call_role"]:
+                previous_is_tool_caller = (
+                    result
+                    and result[-1].get("role") == "assistant"
+                    and "tool_calls" in result[-1]
+                )
+                if not previous_is_tool_caller:
+                    self.logger.info(f"[_cleanup_input_messages] Skipping orphaned tool at [{position}]")
+                    position += 1
                     continue
 
-            # Check if this is an assistant message with tool_calls
-            if msg.get("role") == "assistant" and "tool_calls" in msg:
-                # Look ahead to see if there's a final assistant response after tool results
-                j = i + 1
-                # Skip all tool result messages
+            # Skip tool call sequences that never get a final assistant response
+            if current_role == "assistant" and "tool_calls" in current_msg:
+                # Scan ahead past all consecutive tool results
+                next_position = position + 1
                 while (
-                    j < len(temp_messages)
-                    and temp_messages[j].get("role") == self.agent["tool_call_role"]
+                    next_position < len(input_messages)
+                    and input_messages[next_position].get("role")
+                    == self.agent["tool_call_role"]
                 ):
-                    j += 1
+                    next_position += 1
 
-                # If next message is user or end of messages, we have incomplete tool cycle
-                # Skip the assistant message with tool_calls and its tool results
-                if j >= len(temp_messages) or temp_messages[j].get("role") == "user":
-                    self.logger.info(
-                        f"[_cleanup_input_messages] Removing incomplete tool cycle from index {i} to {j-1}"
-                    )
-                    # Skip this assistant message and all following tool results
-                    i = j
+                # Sequence is broken if it ends or is followed by a user message
+                sequence_incomplete = (
+                    next_position >= len(input_messages)
+                    or input_messages[next_position].get("role") == "user"
+                )
+                if sequence_incomplete:
+                    self.logger.info(f"[_cleanup_input_messages] Skipping incomplete cycle [{position}:{next_position - 1}]")
+                    position = next_position
                     continue
 
-            # Keep this message
-            cleaned_messages.append(msg)
-            i += 1
+            result.append(current_msg)
+            position += 1
 
-        self.logger.info(
-            f"[_cleanup_input_messages] After cleanup, input_messages has {len(cleaned_messages)} messages"
-        )
-        for idx, msg in enumerate(cleaned_messages):
-            self.logger.info(
-                f"  Message {idx}: role={msg.get('role')}, has_tool_calls={'tool_calls' in msg}, tool_name={msg.get('tool_name', 'N/A')}"
-            )
+        self.logger.info(f"[_cleanup_input_messages] Retained {len(result)} messages")
 
-        return cleaned_messages
+        return result
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
