@@ -227,9 +227,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             input_messages = self._cleanup_input_messages(input_messages)
 
             timestamp = pendulum.now("UTC").int_timestamp
-            run_id = (
-                f"run-{self.model_setting["model"]}-{timestamp}-{str(uuid.uuid4())[:8]}"
-            )
+            run_id = f"run-ollama-{self.model_setting["model"]}-{timestamp}-{str(uuid.uuid4())[:8]}"
 
             response = self.invoke_model(
                 **{
@@ -508,7 +506,8 @@ class OllamaEventHandler(AIAgentEventHandler):
             return
 
         # Generate a unique message ID since Ollama doesn't provide one
-        message_id = f"msg-{pendulum.now('UTC').int_timestamp}-{str(uuid.uuid4())[:8]}"
+        timestamp = pendulum.now("UTC").int_timestamp
+        message_id = f"msg-ollama-{self.model_setting.get("model")}-{timestamp}-{str(uuid.uuid4())[:8]}"
         self.final_output = {
             "message_id": message_id,
             "role": message.get("role", "assistant"),
@@ -554,13 +553,6 @@ class OllamaEventHandler(AIAgentEventHandler):
         index += 1
 
         for chunk in response_stream:
-            # Ollama streaming format: {"message": {"role": "assistant", "content": "..."}, "done": false, ...}
-            # Generate message_id on first chunk
-            if not message_id:
-                message_id = (
-                    f"msg-{pendulum.now('UTC').int_timestamp}-{str(uuid.uuid4())[:8]}"
-                )
-
             # Get the message from the chunk
             message = chunk.get("message", {})
 
@@ -576,6 +568,18 @@ class OllamaEventHandler(AIAgentEventHandler):
             # Skip empty chunks
             if not chunk_content:
                 continue
+
+            # Ollama streaming format: {"message": {"role": "assistant", "content": "..."}, "done": false, ...}
+            # Generate message_id on first chunk
+            if not message_id:
+                self.send_data_to_stream(
+                    index=index,
+                    data_format=output_format,
+                )
+                index += 1
+
+                timestamp = pendulum.now("UTC").int_timestamp
+                message_id = f"msg-ollama-{self.model_setting.get("model")}-{timestamp}-{str(uuid.uuid4())[:8]}"
 
             # Print out for stream.
             print(chunk_content, end="", flush=True)
