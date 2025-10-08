@@ -465,23 +465,61 @@ class OllamaEventHandler(AIAgentEventHandler):
             }
         )
 
+    def _check_retry_limit(self, retry_count: int) -> None:
+        """
+        Check if retry limit has been exceeded and raise exception if so.
+
+        Args:
+            retry_count: Current retry count
+
+        Raises:
+            Exception: If retry_count exceeds MAX_RETRIES
+        """
+        MAX_RETRIES = 5
+        if retry_count > MAX_RETRIES:
+            error_msg = f"Maximum retry limit ({MAX_RETRIES}) exceeded for empty responses"
+            self.logger.error(error_msg)
+            raise Exception(error_msg)
+
+    def _has_valid_content(self, text: str) -> bool:
+        """
+        Check if response text contains valid content.
+
+        Args:
+            text: Response text to check
+
+        Returns:
+            True if text is not None/empty/whitespace-only, False otherwise
+        """
+        return bool(text and text.strip())
+
     def handle_response(
         self,
         response: Any,
         input_messages: List[Dict[str, Any]],
+        retry_count: int = 0,
     ) -> None:
         """
-        Processes non-streaming model output
+        Processes non-streaming model output.
+
+        Handles three scenarios:
+        1. Function call → Execute and recurse
+        2. Empty response → Retry up to 5 times
+        3. Valid response → Set final_output
 
         Args:
             response: Model response object (Ollama format)
+            input_messages: Current conversation history
+            retry_count: Current retry count (max 5 retries)
         """
+        self._check_retry_limit(retry_count)
+
         self.logger.info("Processing output: %s", response)
 
         # Ollama response format: {"message": {"role": "assistant", "content": "..."}, "model": "...", ...}
         message = response.get("message", {})
 
-        # Check for tool calls in the response
+        # Scenario 1: Handle function calls
         if "tool_calls" in message and message["tool_calls"]:
             tool_calls = message["tool_calls"]
 
@@ -498,20 +536,32 @@ class OllamaEventHandler(AIAgentEventHandler):
             for tool_call in tool_calls:
                 input_messages = self.handle_function_call(tool_call, input_messages)
 
-            # Make follow-up call with tool results
+            # Recurse with fresh response (reset retry count)
             response = self.invoke_model(
                 **{"input_messages": input_messages, "stream": False}
             )
-            self.handle_response(response, input_messages)
+            self.handle_response(response, input_messages, retry_count=0)
             return
 
-        # Generate a unique message ID since Ollama doesn't provide one
+        # Scenario 2: Empty response - retry
+        content = message.get("content", "")
+        if not self._has_valid_content(content):
+            self.logger.warning(
+                f"Received empty response from model, retrying (attempt {retry_count + 1}/5)..."
+            )
+            next_response = self.invoke_model(
+                **{"input_messages": input_messages, "stream": False}
+            )
+            self.handle_response(next_response, input_messages, retry_count=retry_count + 1)
+            return
+
+        # Scenario 3: Valid response - set final output
         timestamp = pendulum.now("UTC").int_timestamp
         message_id = f"msg-ollama-{self.model_setting.get("model")}-{timestamp}-{str(uuid.uuid4())[:8]}"
         self.final_output = {
             "message_id": message_id,
             "role": message.get("role", "assistant"),
-            "content": message.get("content", ""),
+            "content": content,
         }
 
     def handle_stream(
@@ -519,13 +569,21 @@ class OllamaEventHandler(AIAgentEventHandler):
         response_stream: Any,
         input_messages: List[Dict[str, Any]],
         stream_event: threading.Event = None,
+        retry_count: int = 0,
     ) -> None:
         """
-        Processes streaming model responses chunk by chunk
+        Processes streaming model responses chunk by chunk.
+
+        Handles three scenarios:
+        1. Function call → Execute and recurse
+        2. Empty stream → Retry up to 5 times
+        3. Valid stream → Accumulate and set final_output
 
         Args:
             response_stream: Iterator of response chunks (Ollama format)
+            input_messages: Current conversation history
             stream_event: Event to signal completion
+            retry_count: Current retry count (max 5 retries)
 
         Handles:
             - Accumulating response text
@@ -534,11 +592,14 @@ class OllamaEventHandler(AIAgentEventHandler):
             - Sending chunks to websocket
             - Signaling completion
         """
+        self._check_retry_limit(retry_count)
+
         message_id = None
         self.accumulated_text = ""
         accumulated_partial_json = ""
         accumulated_partial_text = ""
         accumulated_tool_calls = []
+        received_any_content = False
         output_format = (
             self.model_setting.get("text", {"format": {"type": "text"}})
             .get("format", {"type": "text"})
@@ -561,6 +622,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                 for tool_call in message["tool_calls"]:
                     # Accumulate tool calls to handle them at the end
                     accumulated_tool_calls.append(tool_call)
+                    received_any_content = True
 
             # Get the content from the chunk
             chunk_content = message.get("content")
@@ -568,6 +630,8 @@ class OllamaEventHandler(AIAgentEventHandler):
             # Skip empty chunks
             if not chunk_content:
                 continue
+
+            received_any_content = True
 
             # Ollama streaming format: {"message": {"role": "assistant", "content": "..."}, "done": false, ...}
             # Generate message_id on first chunk
@@ -610,7 +674,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             accumulated_partial_text = ""
             index += 1
 
-        # Handle accumulated tool calls after streaming completes
+        # Scenario 1: Handle accumulated tool calls after streaming completes
         if accumulated_tool_calls:
             # Append the assistant's message with tool_calls
             input_messages.append(
@@ -625,14 +689,25 @@ class OllamaEventHandler(AIAgentEventHandler):
             for tool_call in accumulated_tool_calls:
                 input_messages = self.handle_function_call(tool_call, input_messages)
 
-            # Make follow-up streaming call with tool results
-            # Note: Recursive call will handle its own stream_event and final_output
+            # Recurse with fresh response (reset retry count)
             response = self.invoke_model(
                 **{"input_messages": input_messages, "stream": True}
             )
-            self.handle_stream(response, input_messages, stream_event=stream_event)
+            self.handle_stream(response, input_messages, stream_event=stream_event, retry_count=0)
             return
 
+        # Scenario 2: Empty stream - retry
+        if not received_any_content:
+            self.logger.warning(
+                f"Received empty response from model, retrying (attempt {retry_count + 1}/5)..."
+            )
+            next_response = self.invoke_model(
+                **{"input_messages": input_messages, "stream": True}
+            )
+            self.handle_stream(next_response, input_messages, stream_event=stream_event, retry_count=retry_count + 1)
+            return
+
+        # Scenario 3: Valid stream - finalize
         # Send final message end signal
         self.send_data_to_stream(
             index=index,
