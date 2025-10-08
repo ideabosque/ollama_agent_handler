@@ -227,7 +227,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             input_messages = self._cleanup_input_messages(input_messages)
 
             timestamp = pendulum.now("UTC").int_timestamp
-            run_id = f"run-ollama-{self.model_setting["model"]}-{timestamp}-{str(uuid.uuid4())[:8]}"
+            run_id = f"run-ollama-{self.model_setting['model']}-{timestamp}-{str(uuid.uuid4())[:8]}"
 
             response = self.invoke_model(
                 **{
@@ -477,7 +477,9 @@ class OllamaEventHandler(AIAgentEventHandler):
         """
         MAX_RETRIES = 5
         if retry_count > MAX_RETRIES:
-            error_msg = f"Maximum retry limit ({MAX_RETRIES}) exceeded for empty responses"
+            error_msg = (
+                f"Maximum retry limit ({MAX_RETRIES}) exceeded for empty responses"
+            )
             self.logger.error(error_msg)
             raise Exception(error_msg)
 
@@ -552,12 +554,14 @@ class OllamaEventHandler(AIAgentEventHandler):
             next_response = self.invoke_model(
                 **{"input_messages": input_messages, "stream": False}
             )
-            self.handle_response(next_response, input_messages, retry_count=retry_count + 1)
+            self.handle_response(
+                next_response, input_messages, retry_count=retry_count + 1
+            )
             return
 
         # Scenario 3: Valid response - set final output
         timestamp = pendulum.now("UTC").int_timestamp
-        message_id = f"msg-ollama-{self.model_setting.get("model")}-{timestamp}-{str(uuid.uuid4())[:8]}"
+        message_id = f"msg-ollama-{self.model_setting.get('model')}-{timestamp}-{str(uuid.uuid4())[:8]}"
         self.final_output = {
             "message_id": message_id,
             "role": message.get("role", "assistant"),
@@ -643,7 +647,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                 index += 1
 
                 timestamp = pendulum.now("UTC").int_timestamp
-                message_id = f"msg-ollama-{self.model_setting.get("model")}-{timestamp}-{str(uuid.uuid4())[:8]}"
+                message_id = f"msg-ollama-{self.model_setting.get('model')}-{timestamp}-{str(uuid.uuid4())[:8]}"
 
             # Print out for stream.
             print(chunk_content, end="", flush=True)
@@ -693,7 +697,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             response = self.invoke_model(
                 **{"input_messages": input_messages, "stream": True}
             )
-            self.handle_stream(response, input_messages, stream_event=stream_event, retry_count=0)
+            self.handle_stream(
+                response, input_messages, stream_event=stream_event, retry_count=0
+            )
             return
 
         # Scenario 2: Empty stream - retry
@@ -704,7 +710,12 @@ class OllamaEventHandler(AIAgentEventHandler):
             next_response = self.invoke_model(
                 **{"input_messages": input_messages, "stream": True}
             )
-            self.handle_stream(next_response, input_messages, stream_event=stream_event, retry_count=retry_count + 1)
+            self.handle_stream(
+                next_response,
+                input_messages,
+                stream_event=stream_event,
+                retry_count=retry_count + 1,
+            )
             return
 
         # Scenario 3: Valid stream - finalize
