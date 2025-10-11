@@ -358,7 +358,6 @@ class OllamaEventHandler(AIAgentEventHandler):
         """
         try:
             arguments = function_call_data.get("arguments", {})
-            arguments["endpoint_id"] = self._endpoint_id
 
             return arguments
 
