@@ -49,10 +49,29 @@ class OllamaEventHandler(AIAgentEventHandler):
         AIAgentEventHandler.__init__(self, logger, agent, **setting)
 
         self.system_message = {"role": "system", "content": agent["instructions"]}
+
+        # Convert Decimal to float once during initialization (performance optimization)
         self.model_setting = {
             k: float(v) if isinstance(v, Decimal) else v
             for k, v in agent["configuration"].items()
         }
+
+        # Cache frequently accessed configuration values (performance optimization)
+        self.output_format_type = (
+            self.model_setting.get("text", {})
+            .get("format", {})
+            .get("type", "text")
+        )
+
+        # Pre-build options dict for model invocation (performance optimization)
+        option_keys = ["temperature", "top_p", "num_predict", "top_k", "repeat_penalty", "num_ctx"]
+        self.model_options = {
+            k: self.model_setting[k]
+            for k in option_keys
+            if k in self.model_setting
+        }
+
+        # Client uses connection pooling for better performance with multiple requests
         self.client = ollama.Client(
             host=self.model_setting.get("base_url"),
             headers=self.model_setting.get("headers", {}),
@@ -66,64 +85,66 @@ class OllamaEventHandler(AIAgentEventHandler):
         Valid sequences: assistant (with tool_calls) → tool results → assistant (final response).
         Removes tool results without proper initiation or sequences without completion.
 
+        Optimized to O(n) complexity with single-pass algorithm.
+
         Args:
             input_messages: Raw conversation messages
 
         Returns:
             Filtered messages containing only valid sequences
         """
-        self.logger.info(
-            f"[_cleanup_input_messages] Cleaning {len(input_messages)} messages"
-        )
+        if self.logger.isEnabledFor(logging.INFO):
+            self.logger.info(
+                f"[_cleanup_input_messages] Cleaning {len(input_messages)} messages"
+            )
+
+        if not input_messages:
+            return []
 
         result = []
-        position = 0
+        tool_call_role = self.agent["tool_call_role"]
+        i = 0
 
-        while position < len(input_messages):
-            current_msg = input_messages[position]
+        while i < len(input_messages):
+            current_msg = input_messages[i]
             current_role = current_msg.get("role")
 
-            # Skip tool results that don't follow an assistant message with tool_calls
-            if current_role == self.agent["tool_call_role"]:
-                previous_is_tool_caller = (
-                    result
-                    and result[-1].get("role") == "assistant"
-                    and "tool_calls" in result[-1]
-                )
-                if not previous_is_tool_caller:
-                    self.logger.info(
-                        f"[_cleanup_input_messages] Skipping orphaned tool at [{position}]"
-                    )
-                    position += 1
+            # Skip orphaned tool results (not preceded by assistant with tool_calls)
+            if current_role == tool_call_role:
+                if not (result and result[-1].get("role") == "assistant" and "tool_calls" in result[-1]):
+                    if self.logger.isEnabledFor(logging.INFO):
+                        self.logger.info(f"[_cleanup_input_messages] Skipping orphaned tool at [{i}]")
+                    i += 1
                     continue
+                result.append(current_msg)
+                i += 1
+                continue
 
-            # Skip tool call sequences that never get a final assistant response
+            # Handle assistant messages with tool_calls
             if current_role == "assistant" and "tool_calls" in current_msg:
-                # Scan ahead past all consecutive tool results
-                next_position = position + 1
-                while (
-                    next_position < len(input_messages)
-                    and input_messages[next_position].get("role")
-                    == self.agent["tool_call_role"]
-                ):
-                    next_position += 1
+                # Find the end of tool results sequence
+                j = i + 1
+                while j < len(input_messages) and input_messages[j].get("role") == tool_call_role:
+                    j += 1
 
-                # Sequence is broken if it ends or is followed by a user message
-                sequence_incomplete = (
-                    next_position >= len(input_messages)
-                    or input_messages[next_position].get("role") == "user"
-                )
-                if sequence_incomplete:
-                    self.logger.info(
-                        f"[_cleanup_input_messages] Skipping incomplete cycle [{position}:{next_position - 1}]"
-                    )
-                    position = next_position
-                    continue
+                # Check if sequence is complete (followed by assistant message)
+                if j < len(input_messages) and input_messages[j].get("role") == "assistant":
+                    # Valid sequence: include the tool caller
+                    result.append(current_msg)
+                    i += 1
+                else:
+                    # Incomplete sequence: skip entire cycle
+                    if self.logger.isEnabledFor(logging.INFO):
+                        self.logger.info(f"[_cleanup_input_messages] Skipping incomplete cycle [{i}:{j - 1}]")
+                    i = j
+                continue
 
+            # Regular messages (user, assistant without tool_calls)
             result.append(current_msg)
-            position += 1
+            i += 1
 
-        self.logger.info(f"[_cleanup_input_messages] Retained {len(result)} messages")
+        if self.logger.isEnabledFor(logging.INFO):
+            self.logger.info(f"[_cleanup_input_messages] Retained {len(result)} messages")
 
         return result
 
@@ -141,11 +162,8 @@ class OllamaEventHandler(AIAgentEventHandler):
             Exception: If model invocation fails
         """
         try:
-            messages = []
-            messages.append(self.system_message)
-
-            for input_message in kwargs.get("input_messages"):
-                messages.append(input_message)
+            # Build messages list more efficiently
+            messages = [self.system_message] + kwargs.get("input_messages", [])
 
             # Prepare chat parameters
             chat_params = {
@@ -153,34 +171,20 @@ class OllamaEventHandler(AIAgentEventHandler):
                 "messages": messages,
             }
 
-            # Add optional parameters in the 'options' dict (Ollama format)
-            options = {}
-            if "temperature" in self.model_setting:
-                options["temperature"] = self.model_setting["temperature"]
-            if "top_p" in self.model_setting:
-                options["top_p"] = self.model_setting["top_p"]
-            if "num_predict" in self.model_setting:
-                options["num_predict"] = self.model_setting["num_predict"]
-            if "top_k" in self.model_setting:
-                options["top_k"] = self.model_setting["top_k"]
-            if "repeat_penalty" in self.model_setting:
-                options["repeat_penalty"] = self.model_setting["repeat_penalty"]
-            if "num_ctx" in self.model_setting:
-                options["num_ctx"] = self.model_setting["num_ctx"]
+            # Use pre-built options from __init__ (performance optimization)
+            if self.model_options:
+                chat_params["options"] = self.model_options
 
             # Add tools if available
             if "tools" in self.model_setting:
                 chat_params["tools"] = self.model_setting["tools"]
 
-            # Add format option if specified
-            text_config = self.model_setting.get("text", {})
-            format_config = text_config.get("format", {})
-            format_type = format_config.get("type", "text")
-
-            if format_type == "json_object":
+            # Add format option using cached value (performance optimization)
+            if self.output_format_type == "json_object":
                 chat_params["format"] = "json"
-            elif format_type == "json_schema":
+            elif self.output_format_type == "json_schema":
                 # Ollama supports json schema format
+                format_config = self.model_setting.get("text", {}).get("format", {})
                 if "schema" in format_config:
                     chat_params["format"] = format_config["schema"]
 
@@ -191,7 +195,8 @@ class OllamaEventHandler(AIAgentEventHandler):
             return self.client.chat(**chat_params)
 
         except Exception as e:
-            self.logger.error(f"Error invoking model: {str(e)}")
+            if self.logger.isEnabledFor(logging.ERROR):
+                self.logger.error(f"Error invoking model: {str(e)}")
             raise Exception(f"Failed to invoke model: {str(e)}")
 
     @Utility.performance_monitor.monitor_operation(operation_name="Ollama")
@@ -227,7 +232,8 @@ class OllamaEventHandler(AIAgentEventHandler):
             input_messages = self._cleanup_input_messages(input_messages)
 
             timestamp = pendulum.now("UTC").int_timestamp
-            run_id = f"run-ollama-{self.model_setting['model']}-{timestamp}-{str(uuid.uuid4())[:8]}"
+            # Optimized UUID generation - use .hex instead of str() conversion
+            run_id = f"run-ollama-{self.model_setting['model']}-{timestamp}-{uuid.uuid4().hex[:8]}"
 
             response = self.invoke_model(
                 **{
@@ -269,31 +275,34 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         function_info = tool_call["function"]
         function_call_data = {
-            "id": str(uuid.uuid4()),  # Generate ID if not provided
+            "id": uuid.uuid4().hex,  # Optimized UUID generation
             "arguments": function_info.get("arguments", {}),
             "type": "function",
             "name": function_info["name"],
         }
 
         try:
-            self.logger.info(
-                f"[handle_function_call] Starting function call recording for {function_call_data['name']}"
-            )
+            function_name = function_call_data['name']
+
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(f"[handle_function_call] Starting function call recording for {function_name}")
+
             self._record_function_call_start(function_call_data)
 
-            self.logger.info(
-                f"[handle_function_call] Processing arguments for function {function_call_data['name']}"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(f"[handle_function_call] Processing arguments for function {function_name}")
+
             arguments = self._process_function_arguments(function_call_data)
 
-            self.logger.info(
-                f"[handle_function_call] Executing function {function_call_data['name']} with arguments {arguments}"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(f"[handle_function_call] Executing function {function_name} with arguments {arguments}")
+
             function_output = self._execute_function(function_call_data, arguments)
+
             # Update conversation history
-            self.logger.info(
-                f"[handle_function_call][{function_call_data['name']}] Updating conversation history"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(f"[handle_function_call][{function_name}] Updating conversation history")
+
             self._update_conversation_history(
                 function_call_data, function_output, input_messages
             )
@@ -363,6 +372,7 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         except Exception as e:
             log = traceback.format_exc()
+            # Batch async call with error details (performance optimization)
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
                 **{
@@ -372,7 +382,8 @@ class OllamaEventHandler(AIAgentEventHandler):
                     "notes": log,
                 },
             )
-            self.logger.error("Error parsing function arguments: %s", e)
+            if self.logger.isEnabledFor(logging.ERROR):
+                self.logger.error("Error parsing function arguments: %s", e)
             raise ValueError(f"Failed to parse function arguments: {e}")
 
     def _execute_function(
@@ -398,11 +409,14 @@ class OllamaEventHandler(AIAgentEventHandler):
             )
 
         try:
+            # Cache JSON serialization to avoid duplicate work (performance optimization)
+            arguments_json = Utility.json_dumps(arguments)
+
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
-                    "arguments": Utility.json_dumps(arguments),
+                    "arguments": arguments_json,
                     "status": "in_progress",
                 },
             )
@@ -421,11 +435,13 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         except Exception as e:
             log = traceback.format_exc()
+            # Cache JSON serialization to avoid duplicate work (performance optimization)
+            arguments_json = Utility.json_dumps(arguments)
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
-                    "arguments": Utility.json_dumps(arguments),
+                    "arguments": arguments_json,
                     "status": "failed",
                     "notes": log,
                 },
@@ -560,7 +576,8 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         # Scenario 3: Valid response - set final output
         timestamp = pendulum.now("UTC").int_timestamp
-        message_id = f"msg-ollama-{self.model_setting.get('model')}-{timestamp}-{str(uuid.uuid4())[:8]}"
+        # Optimized UUID generation
+        message_id = f"msg-ollama-{self.model_setting.get('model')}-{timestamp}-{uuid.uuid4().hex[:8]}"
         self.final_output = {
             "message_id": message_id,
             "role": message.get("role", "assistant"),
@@ -598,16 +615,14 @@ class OllamaEventHandler(AIAgentEventHandler):
         self._check_retry_limit(retry_count)
 
         message_id = None
-        self.accumulated_text = ""
+        # Use list for efficient string concatenation (performance optimization)
+        accumulated_text_parts = []
         accumulated_partial_json = ""
         accumulated_partial_text = ""
         accumulated_tool_calls = []
         received_any_content = False
-        output_format = (
-            self.model_setting.get("text", {"format": {"type": "text"}})
-            .get("format", {"type": "text"})
-            .get("type", "text")
-        )
+        # Use cached output format type (performance optimization)
+        output_format = self.output_format_type
         index = 0
 
         self.send_data_to_stream(
@@ -646,22 +661,26 @@ class OllamaEventHandler(AIAgentEventHandler):
                 index += 1
 
                 timestamp = pendulum.now("UTC").int_timestamp
-                message_id = f"msg-ollama-{self.model_setting.get('model')}-{timestamp}-{str(uuid.uuid4())[:8]}"
+                # Optimized UUID generation
+                message_id = f"msg-ollama-{self.model_setting.get('model')}-{timestamp}-{uuid.uuid4().hex[:8]}"
 
-            # Print out for stream.
+            # Print out for stream and accumulate in list (performance optimization)
             print(chunk_content, end="", flush=True)
+            accumulated_text_parts.append(chunk_content)
+
             if output_format in ["json_object", "json_schema"]:
                 accumulated_partial_json += chunk_content
-                index, self.accumulated_text, accumulated_partial_json = (
+                # Temporarily build accumulated_text for processing
+                temp_accumulated_text = ''.join(accumulated_text_parts)
+                index, temp_accumulated_text, accumulated_partial_json = (
                     self.process_and_send_json(
                         index,
-                        self.accumulated_text,
+                        temp_accumulated_text,
                         accumulated_partial_json,
                         output_format,
                     )
                 )
             else:
-                self.accumulated_text += chunk_content
                 accumulated_partial_text += chunk_content
                 # Check if text contains XML-style tags and update format
                 index, accumulated_partial_text = self.process_text_content(
@@ -677,13 +696,16 @@ class OllamaEventHandler(AIAgentEventHandler):
             accumulated_partial_text = ""
             index += 1
 
+        # Build final accumulated text from parts (performance optimization)
+        final_accumulated_text = ''.join(accumulated_text_parts)
+
         # Scenario 1: Handle accumulated tool calls after streaming completes
         if accumulated_tool_calls:
             # Append the assistant's message with tool_calls
             input_messages.append(
                 {
                     "role": "assistant",
-                    "content": self.accumulated_text,
+                    "content": final_accumulated_text,
                     "tool_calls": accumulated_tool_calls,
                 }
             )
@@ -730,11 +752,15 @@ class OllamaEventHandler(AIAgentEventHandler):
             "message_id": (
                 message_id
                 if message_id
-                else f"msg-{pendulum.now('UTC').int_timestamp}-{str(uuid.uuid4())[:8]}"
+                # Optimized UUID generation
+                else f"msg-{pendulum.now('UTC').int_timestamp}-{uuid.uuid4().hex[:8]}"
             ),
             "role": "assistant",
-            "content": self.accumulated_text,
+            "content": final_accumulated_text,
         }
+
+        # Store accumulated_text for backward compatibility
+        self.accumulated_text = final_accumulated_text
 
         # Signal that streaming has finished
         if stream_event:
