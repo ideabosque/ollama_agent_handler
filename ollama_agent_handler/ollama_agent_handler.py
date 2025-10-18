@@ -148,6 +148,26 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         return result
 
+    def _get_elapsed_time(self) -> float:
+        """
+        Get elapsed time in milliseconds from the first ask_model call.
+
+        Returns:
+            Elapsed time in milliseconds, or 0 if global start time not set
+        """
+        if not hasattr(self, '_global_start_time') or self._global_start_time is None:
+            return 0.0
+        return (pendulum.now("UTC") - self._global_start_time).total_seconds() * 1000
+
+    def reset_timeline(self) -> None:
+        """
+        Reset the global timeline for a new run.
+        Should be called at the start of each new user interaction/run.
+        """
+        self._global_start_time = None
+        if self.logger.isEnabledFor(logging.INFO):
+            self.logger.info(f"[TIMELINE] Timeline reset for new run")
+
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
         Invokes the Ollama model with provided messages and handles tool calls
@@ -162,6 +182,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             Exception: If model invocation fails
         """
         try:
+            invoke_start = pendulum.now("UTC")
             # Build messages list more efficiently
             messages = [self.system_message] + kwargs.get("input_messages", [])
 
@@ -192,7 +213,15 @@ class OllamaEventHandler(AIAgentEventHandler):
             if kwargs["stream"]:
                 chat_params["stream"] = True
 
-            return self.client.chat(**chat_params)
+            result = self.client.chat(**chat_params)
+
+            invoke_end = pendulum.now("UTC")
+            invoke_time = (invoke_end - invoke_start).total_seconds() * 1000
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: API call returned (took {invoke_time:.2f}ms)")
+
+            return result
 
         except Exception as e:
             if self.logger.isEnabledFor(logging.ERROR):
@@ -222,6 +251,27 @@ class OllamaEventHandler(AIAgentEventHandler):
         Raises:
             Exception: If request processing fails
         """
+        # Track preparation time
+        ask_model_start = pendulum.now("UTC")
+
+        # Track recursion depth to identify top-level vs recursive calls
+        if not hasattr(self, '_ask_model_depth'):
+            self._ask_model_depth = 0
+
+        self._ask_model_depth += 1
+        is_top_level = (self._ask_model_depth == 1)
+
+        # Initialize global start time only on top-level ask_model call
+        # Recursive calls will use the same start time for the entire run timeline
+        if is_top_level:
+            self._global_start_time = ask_model_start
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(f"[TIMELINE] T+0ms: Run started - First ask_model call")
+        else:
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Recursive ask_model call started")
+
         try:
             stream = True if queue is not None else False
 
@@ -229,7 +279,18 @@ class OllamaEventHandler(AIAgentEventHandler):
             if model_setting:
                 self.model_setting.update(model_setting)
 
+            # Clean up input messages to remove broken tool sequences (performance optimization)
+            cleanup_start = pendulum.now("UTC")
             input_messages = self._cleanup_input_messages(input_messages)
+            cleanup_end = pendulum.now("UTC")
+            cleanup_time = (cleanup_end - cleanup_start).total_seconds() * 1000
+
+            # Track total preparation time before API call
+            preparation_end = pendulum.now("UTC")
+            preparation_time = (preparation_end - ask_model_start).total_seconds() * 1000
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Preparation complete (took {preparation_time:.2f}ms, cleanup: {cleanup_time:.2f}ms)")
 
             timestamp = pendulum.now("UTC").int_timestamp
             # Optimized UUID generation - use .hex instead of str() conversion
@@ -252,6 +313,16 @@ class OllamaEventHandler(AIAgentEventHandler):
         except Exception as e:
             self.logger.error(f"Error in ask_model: {str(e)}")
             raise Exception(f"Failed to process model request: {str(e)}")
+        finally:
+            # Decrement depth when exiting ask_model
+            self._ask_model_depth -= 1
+
+            # Reset timeline when returning to depth 0 (top-level call complete)
+            if self._ask_model_depth == 0:
+                if self.logger.isEnabledFor(logging.INFO):
+                    elapsed = self._get_elapsed_time()
+                    self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Run complete - Resetting timeline")
+                self._global_start_time = None
 
     def handle_function_call(
         self, tool_call: Dict[str, any], input_messages: List[Dict[str, Any]]
@@ -269,6 +340,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             ValueError: For invalid tool calls
             Exception: For function execution failures
         """
+        # Track function call timing
+        function_call_start = pendulum.now("UTC")
+
         # Ollama format: {"function": {"name": "...", "arguments": {...}}}
         if "function" not in tool_call:
             raise ValueError("Invalid tool_call object: missing 'function' key")
@@ -327,6 +401,13 @@ class OllamaEventHandler(AIAgentEventHandler):
                         "created_at": pendulum.now("UTC"),
                     }
                 )
+
+            # Log function call execution time
+            function_call_end = pendulum.now("UTC")
+            function_call_time = (function_call_end - function_call_start).total_seconds() * 1000
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' complete (took {function_call_time:.2f}ms)")
 
             return input_messages
 
@@ -421,7 +502,15 @@ class OllamaEventHandler(AIAgentEventHandler):
                 },
             )
 
+            # Track actual function execution time
+            function_exec_start = pendulum.now("UTC")
             function_output = agent_function(**arguments)
+            function_exec_end = pendulum.now("UTC")
+            function_exec_time = (function_exec_end - function_exec_start).total_seconds() * 1000
+
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' executed (took {function_exec_time:.2f}ms)")
 
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
