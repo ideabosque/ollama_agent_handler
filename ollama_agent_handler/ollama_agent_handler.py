@@ -71,6 +71,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             if k in self.model_setting
         }
 
+        # Enable/disable timeline logging
+        self.enable_timeline_log = setting.get("enable_timeline_log", True)
+
         # Client uses connection pooling for better performance with multiple requests
         self.client = ollama.Client(
             host=self.model_setting.get("base_url"),
@@ -165,7 +168,7 @@ class OllamaEventHandler(AIAgentEventHandler):
         Should be called at the start of each new user interaction/run.
         """
         self._global_start_time = None
-        if self.logger.isEnabledFor(logging.INFO):
+        if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
             self.logger.info(f"[TIMELINE] Timeline reset for new run")
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
@@ -217,7 +220,7 @@ class OllamaEventHandler(AIAgentEventHandler):
 
             invoke_end = pendulum.now("UTC")
             invoke_time = (invoke_end - invoke_start).total_seconds() * 1000
-            if self.logger.isEnabledFor(logging.INFO):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
                 self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: API call returned (took {invoke_time:.2f}ms)")
 
@@ -265,10 +268,10 @@ class OllamaEventHandler(AIAgentEventHandler):
         # Recursive calls will use the same start time for the entire run timeline
         if is_top_level:
             self._global_start_time = ask_model_start
-            if self.logger.isEnabledFor(logging.INFO):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 self.logger.info(f"[TIMELINE] T+0ms: Run started - First ask_model call")
         else:
-            if self.logger.isEnabledFor(logging.INFO):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
                 self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Recursive ask_model call started")
 
@@ -288,7 +291,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             # Track total preparation time before API call
             preparation_end = pendulum.now("UTC")
             preparation_time = (preparation_end - ask_model_start).total_seconds() * 1000
-            if self.logger.isEnabledFor(logging.INFO):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
                 self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Preparation complete (took {preparation_time:.2f}ms, cleanup: {cleanup_time:.2f}ms)")
 
@@ -319,7 +322,7 @@ class OllamaEventHandler(AIAgentEventHandler):
 
             # Reset timeline when returning to depth 0 (top-level call complete)
             if self._ask_model_depth == 0:
-                if self.logger.isEnabledFor(logging.INFO):
+                if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                     elapsed = self._get_elapsed_time()
                     self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Run complete - Resetting timeline")
                 self._global_start_time = None
@@ -405,7 +408,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             # Log function call execution time
             function_call_end = pendulum.now("UTC")
             function_call_time = (function_call_end - function_call_start).total_seconds() * 1000
-            if self.logger.isEnabledFor(logging.INFO):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
                 self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' complete (took {function_call_time:.2f}ms)")
 
@@ -508,7 +511,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             function_exec_end = pendulum.now("UTC")
             function_exec_time = (function_exec_end - function_exec_start).total_seconds() * 1000
 
-            if self.logger.isEnabledFor(logging.INFO):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
                 self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' executed (took {function_exec_time:.2f}ms)")
 
