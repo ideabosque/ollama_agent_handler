@@ -75,9 +75,11 @@ class OllamaEventHandler(AIAgentEventHandler):
         self.enable_timeline_log = setting.get("enable_timeline_log", True)
 
         # Client uses connection pooling for better performance with multiple requests
+        # HTTP/2 is enabled natively for improved performance with multiplexing
         self.client = ollama.Client(
             host=self.model_setting.get("base_url"),
             headers=self.model_setting.get("headers", {}),
+            http2=True,
         )
 
     def _cleanup_input_messages(
