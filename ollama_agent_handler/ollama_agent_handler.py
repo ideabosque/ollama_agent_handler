@@ -58,21 +58,24 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         # Cache frequently accessed configuration values (performance optimization)
         self.output_format_type = (
-            self.model_setting.get("text", {})
-            .get("format", {})
-            .get("type", "text")
+            self.model_setting.get("text", {}).get("format", {}).get("type", "text")
         )
 
         # Pre-build options dict for model invocation (performance optimization)
-        option_keys = ["temperature", "top_p", "num_predict", "top_k", "repeat_penalty", "num_ctx"]
+        option_keys = [
+            "temperature",
+            "top_p",
+            "num_predict",
+            "top_k",
+            "repeat_penalty",
+            "num_ctx",
+        ]
         self.model_options = {
-            k: self.model_setting[k]
-            for k in option_keys
-            if k in self.model_setting
+            k: self.model_setting[k] for k in option_keys if k in self.model_setting
         }
 
         # Enable/disable timeline logging
-        self.enable_timeline_log = setting.get("enable_timeline_log", True)
+        self.enable_timeline_log = setting.get("enable_timeline_log", False)
 
         # Client uses connection pooling for better performance with multiple requests
         # HTTP/2 is enabled natively for improved performance with multiplexing
@@ -116,9 +119,15 @@ class OllamaEventHandler(AIAgentEventHandler):
 
             # Skip orphaned tool results (not preceded by assistant with tool_calls)
             if current_role == tool_call_role:
-                if not (result and result[-1].get("role") == "assistant" and "tool_calls" in result[-1]):
+                if not (
+                    result
+                    and result[-1].get("role") == "assistant"
+                    and "tool_calls" in result[-1]
+                ):
                     if self.logger.isEnabledFor(logging.INFO):
-                        self.logger.info(f"[_cleanup_input_messages] Skipping orphaned tool at [{i}]")
+                        self.logger.info(
+                            f"[_cleanup_input_messages] Skipping orphaned tool at [{i}]"
+                        )
                     i += 1
                     continue
                 result.append(current_msg)
@@ -129,18 +138,26 @@ class OllamaEventHandler(AIAgentEventHandler):
             if current_role == "assistant" and "tool_calls" in current_msg:
                 # Find the end of tool results sequence
                 j = i + 1
-                while j < len(input_messages) and input_messages[j].get("role") == tool_call_role:
+                while (
+                    j < len(input_messages)
+                    and input_messages[j].get("role") == tool_call_role
+                ):
                     j += 1
 
                 # Check if sequence is complete (followed by assistant message)
-                if j < len(input_messages) and input_messages[j].get("role") == "assistant":
+                if (
+                    j < len(input_messages)
+                    and input_messages[j].get("role") == "assistant"
+                ):
                     # Valid sequence: include the tool caller
                     result.append(current_msg)
                     i += 1
                 else:
                     # Incomplete sequence: skip entire cycle
                     if self.logger.isEnabledFor(logging.INFO):
-                        self.logger.info(f"[_cleanup_input_messages] Skipping incomplete cycle [{i}:{j - 1}]")
+                        self.logger.info(
+                            f"[_cleanup_input_messages] Skipping incomplete cycle [{i}:{j - 1}]"
+                        )
                     i = j
                 continue
 
@@ -149,7 +166,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             i += 1
 
         if self.logger.isEnabledFor(logging.INFO):
-            self.logger.info(f"[_cleanup_input_messages] Retained {len(result)} messages")
+            self.logger.info(
+                f"[_cleanup_input_messages] Retained {len(result)} messages"
+            )
 
         return result
 
@@ -160,7 +179,7 @@ class OllamaEventHandler(AIAgentEventHandler):
         Returns:
             Elapsed time in milliseconds, or 0 if global start time not set
         """
-        if not hasattr(self, '_global_start_time') or self._global_start_time is None:
+        if not hasattr(self, "_global_start_time") or self._global_start_time is None:
             return 0.0
         return (pendulum.now("UTC") - self._global_start_time).total_seconds() * 1000
 
@@ -224,7 +243,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             invoke_time = (invoke_end - invoke_start).total_seconds() * 1000
             if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
-                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: API call returned (took {invoke_time:.2f}ms)")
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: API call returned (took {invoke_time:.2f}ms)"
+                )
 
             return result
 
@@ -260,22 +281,26 @@ class OllamaEventHandler(AIAgentEventHandler):
         ask_model_start = pendulum.now("UTC")
 
         # Track recursion depth to identify top-level vs recursive calls
-        if not hasattr(self, '_ask_model_depth'):
+        if not hasattr(self, "_ask_model_depth"):
             self._ask_model_depth = 0
 
         self._ask_model_depth += 1
-        is_top_level = (self._ask_model_depth == 1)
+        is_top_level = self._ask_model_depth == 1
 
         # Initialize global start time only on top-level ask_model call
         # Recursive calls will use the same start time for the entire run timeline
         if is_top_level:
             self._global_start_time = ask_model_start
             if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
-                self.logger.info(f"[TIMELINE] T+0ms: Run started - First ask_model call")
+                self.logger.info(
+                    f"[TIMELINE] T+0ms: Run started - First ask_model call"
+                )
         else:
             if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
-                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Recursive ask_model call started")
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: Recursive ask_model call started"
+                )
 
         try:
             stream = True if queue is not None else False
@@ -292,10 +317,14 @@ class OllamaEventHandler(AIAgentEventHandler):
 
             # Track total preparation time before API call
             preparation_end = pendulum.now("UTC")
-            preparation_time = (preparation_end - ask_model_start).total_seconds() * 1000
+            preparation_time = (
+                preparation_end - ask_model_start
+            ).total_seconds() * 1000
             if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
-                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Preparation complete (took {preparation_time:.2f}ms, cleanup: {cleanup_time:.2f}ms)")
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: Preparation complete (took {preparation_time:.2f}ms, cleanup: {cleanup_time:.2f}ms)"
+                )
 
             timestamp = pendulum.now("UTC").int_timestamp
             # Optimized UUID generation - use .hex instead of str() conversion
@@ -326,7 +355,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             if self._ask_model_depth == 0:
                 if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                     elapsed = self._get_elapsed_time()
-                    self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Run complete - Resetting timeline")
+                    self.logger.info(
+                        f"[TIMELINE] T+{elapsed:.2f}ms: Run complete - Resetting timeline"
+                    )
                 self._global_start_time = None
 
     def handle_function_call(
@@ -361,26 +392,34 @@ class OllamaEventHandler(AIAgentEventHandler):
         }
 
         try:
-            function_name = function_call_data['name']
+            function_name = function_call_data["name"]
 
             if self.logger.isEnabledFor(logging.INFO):
-                self.logger.info(f"[handle_function_call] Starting function call recording for {function_name}")
+                self.logger.info(
+                    f"[handle_function_call] Starting function call recording for {function_name}"
+                )
 
             self._record_function_call_start(function_call_data)
 
             if self.logger.isEnabledFor(logging.INFO):
-                self.logger.info(f"[handle_function_call] Processing arguments for function {function_name}")
+                self.logger.info(
+                    f"[handle_function_call] Processing arguments for function {function_name}"
+                )
 
             arguments = self._process_function_arguments(function_call_data)
 
             if self.logger.isEnabledFor(logging.INFO):
-                self.logger.info(f"[handle_function_call] Executing function {function_name} with arguments {arguments}")
+                self.logger.info(
+                    f"[handle_function_call] Executing function {function_name} with arguments {arguments}"
+                )
 
             function_output = self._execute_function(function_call_data, arguments)
 
             # Update conversation history
             if self.logger.isEnabledFor(logging.INFO):
-                self.logger.info(f"[handle_function_call][{function_name}] Updating conversation history")
+                self.logger.info(
+                    f"[handle_function_call][{function_name}] Updating conversation history"
+                )
 
             self._update_conversation_history(
                 function_call_data, function_output, input_messages
@@ -409,10 +448,14 @@ class OllamaEventHandler(AIAgentEventHandler):
 
             # Log function call execution time
             function_call_end = pendulum.now("UTC")
-            function_call_time = (function_call_end - function_call_start).total_seconds() * 1000
+            function_call_time = (
+                function_call_end - function_call_start
+            ).total_seconds() * 1000
             if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
-                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' complete (took {function_call_time:.2f}ms)")
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' complete (took {function_call_time:.2f}ms)"
+                )
 
             return input_messages
 
@@ -511,11 +554,15 @@ class OllamaEventHandler(AIAgentEventHandler):
             function_exec_start = pendulum.now("UTC")
             function_output = agent_function(**arguments)
             function_exec_end = pendulum.now("UTC")
-            function_exec_time = (function_exec_end - function_exec_start).total_seconds() * 1000
+            function_exec_time = (
+                function_exec_end - function_exec_start
+            ).total_seconds() * 1000
 
             if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
-                self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' executed (took {function_exec_time:.2f}ms)")
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' executed (took {function_exec_time:.2f}ms)"
+                )
 
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
@@ -765,7 +812,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             if output_format in ["json_object", "json_schema"]:
                 accumulated_partial_json += chunk_content
                 # Temporarily build accumulated_text for processing
-                temp_accumulated_text = ''.join(accumulated_text_parts)
+                temp_accumulated_text = "".join(accumulated_text_parts)
                 index, temp_accumulated_text, accumulated_partial_json = (
                     self.process_and_send_json(
                         index,
@@ -791,7 +838,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             index += 1
 
         # Build final accumulated text from parts (performance optimization)
-        final_accumulated_text = ''.join(accumulated_text_parts)
+        final_accumulated_text = "".join(accumulated_text_parts)
 
         # Scenario 1: Handle accumulated tool calls after streaming completes
         if accumulated_tool_calls:
