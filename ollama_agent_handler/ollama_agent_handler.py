@@ -187,7 +187,7 @@ class OllamaEventHandler(AIAgentEventHandler):
         """
         self._global_start_time = None
         if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug(f"[TIMELINE] Timeline reset for new run")
+            self.logger.debug("[TIMELINE] Timeline reset for new run")
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
@@ -290,7 +290,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             self._global_start_time = ask_model_start
             if self.logger.isEnabledFor(logging.DEBUG):
                 self.logger.debug(
-                    f"[TIMELINE] T+0ms: Run started - First ask_model call"
+                    "[TIMELINE] T+0ms: Run started - First ask_model call"
                 )
         else:
             if self.logger.isEnabledFor(logging.DEBUG):
@@ -358,8 +358,8 @@ class OllamaEventHandler(AIAgentEventHandler):
                 self._global_start_time = None
 
     def handle_function_call(
-        self, tool_call: Dict[str, any], input_messages: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, tool_call: Dict[str, Any], input_messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """
         Processes and executes tool/function calls from model responses
 

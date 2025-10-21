@@ -30,3 +30,10 @@ zip-safe = false
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+reportCallIssue = "none"
+reportArgumentType = "none"
+reportAttributeAccessIssue = "none"
+reportOperatorIssue = "none"
