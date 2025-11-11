@@ -710,9 +710,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             except Exception as e:
                 if self.logger.isEnabledFor(logging.ERROR):
                     self.logger.error(f"Failed to process reasoning: {e}")
-                self.final_output["reasoning_summary"] = (
-                    "Error processing reasoning"
-                )
+                self.final_output["reasoning_summary"] = "Error processing reasoning"
 
         # Scenario 1: Handle function calls
         if "tool_calls" in message and message["tool_calls"]:
@@ -756,11 +754,13 @@ class OllamaEventHandler(AIAgentEventHandler):
         timestamp = pendulum.now("UTC").int_timestamp
         # Optimized UUID generation
         message_id = f"msg-ollama-{self.model_setting.get('model')}-{timestamp}-{uuid.uuid4().hex[:8]}"
-        self.final_output = {
-            "message_id": message_id,
-            "role": message.get("role", "assistant"),
-            "content": content,
-        }
+        self.final_output.update(
+            {
+                "message_id": message_id,
+                "role": message.get("role", "assistant"),
+                "content": content,
+            }
+        )
 
     def handle_stream(
         self,
@@ -1016,16 +1016,18 @@ class OllamaEventHandler(AIAgentEventHandler):
         )
 
         # Set final output
-        self.final_output = {
-            "message_id": (
-                message_id
-                if message_id
-                # Optimized UUID generation
-                else f"msg-{pendulum.now('UTC').int_timestamp}-{uuid.uuid4().hex[:8]}"
-            ),
-            "role": "assistant",
-            "content": final_accumulated_text,
-        }
+        self.final_output.update(
+            {
+                "message_id": (
+                    message_id
+                    if message_id
+                    # Optimized UUID generation
+                    else f"msg-{pendulum.now('UTC').int_timestamp}-{uuid.uuid4().hex[:8]}"
+                ),
+                "role": "assistant",
+                "content": final_accumulated_text,
+            }
+        )
 
         # Store accumulated_text for backward compatibility
         self.accumulated_text = final_accumulated_text
