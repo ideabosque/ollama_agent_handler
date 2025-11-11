@@ -64,6 +64,21 @@ class OllamaEventHandler(AIAgentEventHandler):
             self.model_setting.get("text", {}).get("format", {}).get("type", "text")
         )
 
+        # Validate reasoning configuration if present
+        if "reasoning" in self.model_setting:
+            if not isinstance(self.model_setting["reasoning"], dict):
+                if self.logger and self.logger.isEnabledFor(logging.WARNING):
+                    self.logger.warning(
+                        "Reasoning configuration should be a dictionary. "
+                        "Reasoning features may not work correctly."
+                    )
+            elif self.model_setting["reasoning"].get("enabled") is None:
+                if self.logger and self.logger.isEnabledFor(logging.WARNING):
+                    self.logger.warning(
+                        "Reasoning is not explicitly enabled in configuration. "
+                        "Reasoning events will be skipped during streaming."
+                    )
+
         # Pre-build options dict for model invocation (performance optimization)
         option_keys = [
             "temperature",
@@ -232,6 +247,13 @@ class OllamaEventHandler(AIAgentEventHandler):
                 format_config = self.model_setting.get("text", {}).get("format", {})
                 if "schema" in format_config:
                     chat_params["format"] = format_config["schema"]
+
+            # Add reasoning/thinking parameter if enabled
+            reasoning_config = self.model_setting.get("reasoning", {})
+            if isinstance(reasoning_config, dict) and reasoning_config.get("enabled"):
+                chat_params["think"] = True
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("[invoke_model] Reasoning enabled, think=True")
 
             # Return streaming or non-streaming response
             if kwargs["stream"]:
@@ -675,6 +697,23 @@ class OllamaEventHandler(AIAgentEventHandler):
         # Ollama response format: {"message": {"role": "assistant", "content": "..."}, "model": "...", ...}
         message = response.get("message", {})
 
+        # Extract and store reasoning/thinking if present
+        if "thinking" in message and message["thinking"]:
+            thinking_text = message["thinking"]
+            try:
+                if isinstance(thinking_text, str):
+                    self.final_output["reasoning_summary"] = thinking_text
+                    if self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug(
+                            f"[handle_response] Captured reasoning: {thinking_text[:100]}..."
+                        )
+            except Exception as e:
+                if self.logger.isEnabledFor(logging.ERROR):
+                    self.logger.error(f"Failed to process reasoning: {e}")
+                self.final_output["reasoning_summary"] = (
+                    "Error processing reasoning"
+                )
+
         # Scenario 1: Handle function calls
         if "tool_calls" in message and message["tool_calls"]:
             tool_calls = message["tool_calls"]
@@ -764,6 +803,13 @@ class OllamaEventHandler(AIAgentEventHandler):
         output_format = self.output_format_type
         index = 0
 
+        # Reasoning/thinking tracking variables
+        reasoning_no = 0
+        reasoning_index = 0
+        accumulated_reasoning_parts = []
+        accumulated_partial_reasoning_text = ""
+        reasoning_started = False
+
         self.send_data_to_stream(
             index=index,
             data_format=output_format,
@@ -773,6 +819,73 @@ class OllamaEventHandler(AIAgentEventHandler):
         for chunk in response_stream:
             # Get the message from the chunk
             message = chunk.get("message", {})
+
+            # Check for reasoning/thinking in the chunk
+            if "thinking" in message and message["thinking"]:
+                thinking_chunk = message["thinking"]
+                received_any_content = True
+
+                # Start reasoning block if not started
+                if not reasoning_started:
+                    reasoning_started = True
+                    reasoning_index = 0
+                    self.send_data_to_stream(
+                        index=reasoning_index,
+                        data_format=output_format,
+                        chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
+                        suffix=f"rs#{reasoning_no}",
+                    )
+                    reasoning_index += 1
+
+                    if self.enable_timeline_log and self.logger.isEnabledFor(
+                        logging.INFO
+                    ):
+                        elapsed = self._get_elapsed_time()
+                        self.logger.info(
+                            f"[TIMELINE] T+{elapsed:.2f}ms: Reasoning started"
+                        )
+
+                # Accumulate reasoning text
+                print(thinking_chunk, end="", flush=True)
+                accumulated_reasoning_parts.append(thinking_chunk)
+                accumulated_partial_reasoning_text += thinking_chunk
+
+                # Process and send reasoning text
+                reasoning_index, accumulated_partial_reasoning_text = (
+                    self.process_text_content(
+                        reasoning_index,
+                        accumulated_partial_reasoning_text,
+                        output_format,
+                        suffix=f"rs#{reasoning_no}",
+                    )
+                )
+
+            # Check if reasoning block has ended (content starts arriving)
+            if reasoning_started and "content" in message and message.get("content"):
+                # End reasoning block
+                if len(accumulated_partial_reasoning_text) > 0:
+                    self.send_data_to_stream(
+                        index=reasoning_index,
+                        data_format=output_format,
+                        chunk_delta=accumulated_partial_reasoning_text,
+                        suffix=f"rs#{reasoning_no}",
+                    )
+                    accumulated_partial_reasoning_text = ""
+                    reasoning_index += 1
+
+                self.send_data_to_stream(
+                    index=reasoning_index,
+                    data_format=output_format,
+                    chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
+                    is_message_end=True,
+                    suffix=f"rs#{reasoning_no}",
+                )
+                reasoning_no += 1
+                reasoning_started = False
+
+                if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
+                    elapsed = self._get_elapsed_time()
+                    self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Reasoning ended")
 
             # Check for tool calls in streaming chunks (Ollama v0.8.0+)
             if "tool_calls" in message and message["tool_calls"]:
@@ -837,6 +950,22 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         # Build final accumulated text from parts (performance optimization)
         final_accumulated_text = "".join(accumulated_text_parts)
+
+        # Store accumulated reasoning summary if present
+        if accumulated_reasoning_parts:
+            final_reasoning_text = "".join(accumulated_reasoning_parts)
+            if self.final_output.get("reasoning_summary"):
+                # Accumulate reasoning from multiple rounds (e.g., function calls)
+                self.final_output["reasoning_summary"] = (
+                    self.final_output["reasoning_summary"] + "\n" + final_reasoning_text
+                )
+            else:
+                self.final_output["reasoning_summary"] = final_reasoning_text
+
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(
+                    f"[handle_stream] Stored reasoning summary: {final_reasoning_text[:100]}..."
+                )
 
         # Scenario 1: Handle accumulated tool calls after streaming completes
         if accumulated_tool_calls:
