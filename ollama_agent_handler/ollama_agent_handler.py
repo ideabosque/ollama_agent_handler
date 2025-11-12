@@ -313,6 +313,12 @@ class OllamaEventHandler(AIAgentEventHandler):
         # Recursive calls will use the same start time for the entire run timeline
         if is_top_level:
             self._global_start_time = ask_model_start
+
+            # Reset reasoning_summary for new conversation turn
+            # Recursive calls (function call loops) will continue accumulating
+            if "reasoning_summary" in self.final_output:
+                del self.final_output["reasoning_summary"]
+
             if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 self.logger.info("[TIMELINE] T+0ms: Run started - First ask_model call")
         else:
