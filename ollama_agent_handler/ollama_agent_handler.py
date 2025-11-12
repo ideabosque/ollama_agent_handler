@@ -816,12 +816,6 @@ class OllamaEventHandler(AIAgentEventHandler):
         accumulated_partial_reasoning_text = ""
         reasoning_started = False
 
-        self.send_data_to_stream(
-            index=index,
-            data_format=output_format,
-        )
-        index += 1
-
         for chunk in response_stream:
             # Get the message from the chunk
             message = chunk.get("message", {})
@@ -912,6 +906,10 @@ class OllamaEventHandler(AIAgentEventHandler):
             # Ollama streaming format: {"message": {"role": "assistant", "content": "..."}, "done": false, ...}
             # Generate message_id on first chunk
             if not message_id:
+                # Sync index with reasoning_index when starting content after reasoning
+                if index == 0 and reasoning_index > 0:
+                    index = reasoning_index
+
                 self.send_data_to_stream(
                     index=index,
                     data_format=output_format,
