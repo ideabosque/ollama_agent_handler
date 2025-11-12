@@ -908,7 +908,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             if not message_id:
                 # Sync index with reasoning_index when starting content after reasoning
                 if index == 0 and reasoning_index > 0:
-                    index = reasoning_index
+                    index = reasoning_index + 1
 
                 self.send_data_to_stream(
                     index=index,
