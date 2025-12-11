@@ -1,0 +1,204 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "additionalProperties": true,
+    "definitions": {
+        "paramSchema": {
+            "additionalProperties": true,
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "items": {
+                    "$ref": "#/definitions/paramSchema"
+                },
+                "properties": {
+                    "additionalProperties": {
+                        "$ref": "#/definitions/paramSchema"
+                    },
+                    "type": "object"
+                },
+                "required": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "type": {
+                    "enum": [
+                        "string",
+                        "number",
+                        "integer",
+                        "boolean",
+                        "object",
+                        "array"
+                    ],
+                    "type": "string"
+                }
+            },
+            "required": [
+                "type"
+            ],
+            "type": "object"
+        },
+        "toolParameters": {
+            "additionalProperties": true,
+            "properties": {
+                "properties": {
+                    "additionalProperties": {
+                        "$ref": "#/definitions/paramSchema"
+                    },
+                    "type": "object"
+                },
+                "required": {
+                    "items": {
+                        "type": "string"
+                    },
+                    "type": "array"
+                },
+                "type": {
+                    "const": "object"
+                }
+            },
+            "required": [
+                "type",
+                "properties",
+                "required"
+            ],
+            "type": "object"
+        }
+    },
+    "properties": {
+        "base_url": {
+            "description": "The base url of Ollama.",
+            "type": "string"
+        },
+        "model": {
+            "description": "ID of the model that will generate the response (e.g. “gpt-4o” or “gpt-4.1”).",
+            "type": "string"
+        },
+        "headers": {
+            "additionalProperties": true,
+            "properties": {
+                "Authorization": {
+                    "description": "The authorization token.",
+                    "type": "string"
+                },
+                "Content-Type": {
+                    "default": "application/json",
+                    "description": "The content type.",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "temperature": {
+            "default": 0.8,
+            "description": "Sampling temperature; higher values increase randomness.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+        },
+        "text": {
+            "additionalProperties": false,
+            "description": "Controls structured-output formats such as JSON-Schema validation.",
+            "properties": {
+                "format": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "name": {
+                            "type": "string"
+                        },
+                        "schema": {
+                            "type": "object"
+                        },
+                        "type": {
+                            "enum": [
+                                "json_schema",
+                                "json_object",
+                                "text"
+                            ],
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "type"
+                    ],
+                    "type": "object"
+                }
+            },
+            "type": "object"
+        },
+        "tools": {
+            "description": "Optional tool declarations (functions, code-interpreter, built-in `web_search_preview`, etc.).",
+            "items": {
+                "additionalProperties": false,
+                "properties": {
+                    "function": {
+                        "additionalProperties": false,
+                        "properties": {
+                            "description": {
+                                "type": "string"
+                            },
+                            "name": {
+                                "type": "string"
+                            },
+                            "parameters": {
+                                "$ref": "#/definitions/toolParameters"
+                            }
+                        },
+                        "required": [
+                            "description",
+                            "name",
+                            "parameters"
+                        ],
+                        "type": "object"
+                    },
+                    "type": {
+                        "enum": [
+                            "function"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "type",
+                    "name"
+                ],
+                "type": "object"
+            },
+            "type": "array"
+        },
+        "top_p": {
+            "default": 1,
+            "description": "Nucleus-sampling parameter.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+        },
+        "top_k": {
+            "default": 1,
+            "description": "Nucleus-sampling parameter.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+        },
+        "num_predict": {
+            "description": "Nucleus-sampling parameter.",
+            "type": "number"
+        },
+        "repeat_penalty": {
+            "description": "Nucleus-sampling parameter.",
+            "type": "number"
+        },
+        "num_ctx": {
+            "description": "Nucleus-sampling parameter.",
+            "type": "number"
+        }
+    },
+    "required": [
+        "model",
+        "base_url"
+    ],
+    "title": "Ollama Configuration Schema",
+    "type": "object"
+}

@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Ollama-Agent-Handler"
+version = "0.0.1"
+description = "Ollama Agent Handler"
+authors = [
+    {name = "IdeaBosque", email = "ideabosque@gmail.com"}
+]
+requires-python = ">=3.8"
+dependencies = [
+    "SilvaEngine-Utility",
+    "AI-Agent-Handler",
+    "ollama",
+]
+classifiers = [
+    "Programming Language :: Python",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+reportCallIssue = "none"
+reportArgumentType = "none"
+reportAttributeAccessIssue = "none"
+reportOperatorIssue = "none"
