@@ -15,7 +15,8 @@ from typing import Any, Dict, List, Optional
 import ollama
 import pendulum
 from ai_agent_handler import AIAgentEventHandler
-from silvaengine_utility import Serializer, performance_monitor
+from silvaengine_utility.performance_monitor import performance_monitor
+from silvaengine_utility.serializer import Serializer
 
 
 # ----------------------------
@@ -365,9 +366,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             if stream:
                 queue.put({"name": "run_id", "value": run_id})
                 self.handle_stream(response, input_messages, stream_event=stream_event)
-                return None
+            else:
+                self.handle_response(response, input_messages)
 
-            self.handle_response(response, input_messages)
             return run_id
         except Exception as e:
             self.logger.error(f"Error in ask_model: {str(e)}")
