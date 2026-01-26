@@ -16,7 +16,8 @@ import ollama
 import pendulum
 
 from ai_agent_handler import AIAgentEventHandler
-from silvaengine_utility import Utility
+from silvaengine_utility.performance_monitor import performance_monitor
+from silvaengine_utility.serializer import Serializer
 
 
 # ----------------------------
@@ -276,7 +277,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                 self.logger.error(f"Error invoking model: {str(e)}")
             raise Exception(f"Failed to invoke model: {str(e)}")
 
-    @Utility.performance_monitor.monitor_operation(operation_name="Ollama")
+    @performance_monitor.monitor_operation(operation_name="Ollama")
     def ask_model(
         self,
         input_messages: List[Dict[str, Any]],
@@ -366,9 +367,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             if stream:
                 queue.put({"name": "run_id", "value": run_id})
                 self.handle_stream(response, input_messages, stream_event=stream_event)
-                return None
+            else:
+                self.handle_response(response, input_messages)
 
-            self.handle_response(response, input_messages)
             return run_id
         except Exception as e:
             self.logger.error(f"Error in ask_model: {str(e)}")
@@ -456,7 +457,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                     {
                         "message": {
                             "role": self.agent["tool_call_role"],
-                            "content": Utility.json_dumps(
+                            "content": Serializer.json_dumps(
                                 {
                                     "tool": {
                                         "tool_call_id": function_call_data["id"],
@@ -565,7 +566,7 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         try:
             # Cache JSON serialization to avoid duplicate work (performance optimization)
-            arguments_json = Utility.json_dumps(arguments)
+            arguments_json = Serializer.json_dumps(arguments)
 
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
@@ -594,7 +595,7 @@ class OllamaEventHandler(AIAgentEventHandler):
                 "async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
-                    "content": Utility.json_dumps(function_output),
+                    "content": Serializer.json_dumps(function_output),
                     "status": "completed",
                 },
             )
@@ -603,7 +604,7 @@ class OllamaEventHandler(AIAgentEventHandler):
         except Exception as e:
             log = traceback.format_exc()
             # Cache JSON serialization to avoid duplicate work (performance optimization)
-            arguments_json = Utility.json_dumps(arguments)
+            arguments_json = Serializer.json_dumps(arguments)
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
                 **{
@@ -635,7 +636,7 @@ class OllamaEventHandler(AIAgentEventHandler):
         # Append tool result in Ollama format with "tool" role
         # Ensure content is a JSON string
         content = (
-            Utility.json_dumps(function_output)
+            Serializer.json_dumps(function_output)
             if not isinstance(function_output, str)
             else function_output
         )
