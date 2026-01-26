@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 
 import ollama
 import pendulum
-
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
@@ -830,13 +829,13 @@ class OllamaEventHandler(AIAgentEventHandler):
                 if not reasoning_started:
                     reasoning_started = True
                     reasoning_index = 0
-                    self.send_data_to_stream(
-                        index=reasoning_index,
-                        data_format=output_format,
-                        chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
-                        suffix=f"rs#{reasoning_no}",
-                    )
-                    reasoning_index += 1
+                    # self.send_data_to_stream(
+                    #     index=reasoning_index,
+                    #     data_format=output_format,
+                    #     chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
+                    #     suffix=f"rs#{reasoning_no}",
+                    # )
+                    # reasoning_index += 1
 
                     if self.enable_timeline_log and self.logger.isEnabledFor(
                         logging.INFO
@@ -874,13 +873,13 @@ class OllamaEventHandler(AIAgentEventHandler):
                     accumulated_partial_reasoning_text = ""
                     reasoning_index += 1
 
-                self.send_data_to_stream(
-                    index=reasoning_index,
-                    data_format=output_format,
-                    chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
-                    suffix=f"rs#{reasoning_no}",
-                )
-                reasoning_no += 1
+                # self.send_data_to_stream(
+                #     index=reasoning_index,
+                #     data_format=output_format,
+                #     chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
+                #     suffix=f"rs#{reasoning_no}",
+                # )
+                # reasoning_no += 1
                 reasoning_started = False
 
                 if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
