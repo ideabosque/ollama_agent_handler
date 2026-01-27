@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import ollama
 import pendulum
+
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
@@ -52,6 +53,18 @@ class OllamaEventHandler(AIAgentEventHandler):
         self.enable_timeline_log = setting.get("enable_timeline_log", False)
 
         self.system_message = {"role": "system", "content": agent["instructions"]}
+
+        if "enabled_tools" in self.agent["configuration"]:
+            # Add tools if available - matching example.py structure
+            enabled_tools = []
+            if "tools" in self.agent["configuration"]:
+                for tool in self.agent["configuration"]["tools"]:
+                    if tool["name"] not in self.agent["configuration"].get(
+                        "enabled_tools", []
+                    ):
+                        continue
+                    enabled_tools.append(tool)
+            self.agent["configuration"]["tools"] = enabled_tools
 
         # Convert Decimal to float once during initialization (performance optimization)
         self.model_setting = {
