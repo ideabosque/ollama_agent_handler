@@ -842,13 +842,6 @@ class OllamaEventHandler(AIAgentEventHandler):
                 if not reasoning_started:
                     reasoning_started = True
                     reasoning_index = 0
-                    # self.send_data_to_stream(
-                    #     index=reasoning_index,
-                    #     data_format=output_format,
-                    #     chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
-                    #     suffix=f"rs#{reasoning_no}",
-                    # )
-                    # reasoning_index += 1
 
                     if self.enable_timeline_log and self.logger.isEnabledFor(
                         logging.INFO
