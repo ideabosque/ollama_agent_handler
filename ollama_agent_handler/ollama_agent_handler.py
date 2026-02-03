@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 
 import ollama
 import pendulum
-
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
@@ -510,7 +509,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             function_call_data: Function call details to record
         """
         self.invoke_async_funct(
-            "async_insert_update_tool_call",
+            module_name="ai_agent_core_engine",
+            class_name="AIAgentCoreEngine",
+            function_name="async_insert_update_tool_call",
             **{
                 "tool_call_id": function_call_data["id"],
                 "tool_type": function_call_data["type"],
@@ -542,7 +543,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             log = traceback.format_exc()
             # Batch async call with error details (performance optimization)
             self.invoke_async_funct(
-                "async_insert_update_tool_call",
+                module_name="ai_agent_core_engine",
+                class_name="AIAgentCoreEngine",
+                function_name="async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
                     "arguments": function_call_data.get("arguments", "{}"),
@@ -581,7 +584,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             arguments_json = Serializer.json_dumps(arguments)
 
             self.invoke_async_funct(
-                "async_insert_update_tool_call",
+                module_name="ai_agent_core_engine",
+                class_name="AIAgentCoreEngine",
+                function_name="async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
                     "arguments": arguments_json,
@@ -604,7 +609,9 @@ class OllamaEventHandler(AIAgentEventHandler):
                 )
 
             self.invoke_async_funct(
-                "async_insert_update_tool_call",
+                module_name="ai_agent_core_engine",
+                class_name="AIAgentCoreEngine",
+                function_name="async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
                     "content": Serializer.json_dumps(function_output),
@@ -618,7 +625,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             # Cache JSON serialization to avoid duplicate work (performance optimization)
             arguments_json = Serializer.json_dumps(arguments)
             self.invoke_async_funct(
-                "async_insert_update_tool_call",
+                module_name="ai_agent_core_engine",
+                class_name="AIAgentCoreEngine",
+                function_name="async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
                     "arguments": arguments_json,
