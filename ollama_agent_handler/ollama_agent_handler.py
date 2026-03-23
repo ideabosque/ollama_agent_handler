@@ -104,8 +104,6 @@ class OllamaEventHandler(AIAgentEventHandler):
             k: self.model_setting[k] for k in option_keys if k in self.model_setting
         }
 
-        # Client uses connection pooling for better performance with multiple requests
-        # HTTP/2 is enabled natively for improved performance with multiplexing
         self.client = ollama.Client(
             host=self.model_setting.get("base_url"),
             headers=self.model_setting.get("headers", {}),
