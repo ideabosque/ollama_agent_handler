@@ -265,12 +265,12 @@ class OllamaEventHandler(AIAgentEventHandler):
             reasoning_config = self.model_setting.get("reasoning", {})
             if isinstance(reasoning_config, dict) and reasoning_config.get("enabled"):
                 chat_params["think"] = True
-                if self.logger.isEnabledFor(logging.DEBUG):
-                    self.logger.debug("[invoke_model] Reasoning enabled, think=True")
+                if self.logger.isEnabledFor(logging.INFO):
+                    self.logger.info("[invoke_model] Reasoning enabled, think=True")
             else:
                 chat_params["think"] = False
-                if self.logger.isEnabledFor(logging.DEBUG):
-                    self.logger.debug("[invoke_model] Reasoning disabled, think=False")
+                if self.logger.isEnabledFor(logging.INFO):
+                    self.logger.info("[invoke_model] Reasoning disabled, think=False")
 
             # Return streaming or non-streaming response
             if kwargs["stream"]:
@@ -850,6 +850,9 @@ class OllamaEventHandler(AIAgentEventHandler):
             message = chunk.get("message", {})
 
             # Check for reasoning/thinking in the chunk
+            self.logger.info(
+                f"reasoning config: {self.model_setting.get('reasoning', {})}"
+            )
             if self.model_setting.get("reasoning", {}).get("enabled") and (
                 "thinking" in message and message["thinking"]
             ):
