@@ -18,10 +18,10 @@ from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
 
-SEARCH_TOOL_NAMES = {"web_fetch", "web_search"}
+WEB_TOOL_NAMES = {"web_fetch", "web_search"}
 
 # Maximum characters for search tool results (~2000 tokens)
-SEARCH_RESULT_MAX_CHARS = 2000 * 4
+WEB_RESULT_MAX_CHARS = 2000 * 4
 
 
 def format_search_results(results, user_search: str) -> str:
@@ -506,9 +506,9 @@ class OllamaEventHandler(AIAgentEventHandler):
                     f"[handle_function_call] Executing function {function_name} with arguments {arguments}"
                 )
 
-            # Handle built-in search tools (web_fetch, web_search) separately
+            # Handle built-in web tools (web_fetch, web_search) separately
             # from user-defined functions. Uses self.client for auth headers.
-            if function_name in SEARCH_TOOL_NAMES:
+            if function_name in WEB_TOOL_NAMES:
                 func = getattr(self.client, function_name)
                 try:
                     result = func(**arguments)
@@ -517,9 +517,9 @@ class OllamaEventHandler(AIAgentEventHandler):
                     # Format results into structured text and cap at ~2000 tokens
                     function_output = format_search_results(
                         result, user_search=user_search
-                    )[:SEARCH_RESULT_MAX_CHARS]
+                    )[:WEB_RESULT_MAX_CHARS]
                 except Exception as e:
-                    self.logger.error(f"Search tool {function_name} failed: {e}")
+                    self.logger.error(f"Web tool {function_name} failed: {e}")
                     function_output = f"Error: {function_name} failed - {str(e)}"
             else:
                 function_output = self._execute_function(function_call_data, arguments)
