@@ -19,6 +19,51 @@ from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
 
+SEARCH_TOOLS = {
+    "web_fetch": ollama.web_fetch,
+    "web_search": ollama.web_search,
+}
+
+# Maximum characters for search tool results (~2000 tokens)
+SEARCH_RESULT_MAX_CHARS = 2000 * 4
+
+
+def format_search_results(results, user_search: str) -> str:
+    """
+    Format search/fetch tool results into structured text for the model.
+    Follows the official ollama-python example format.
+
+    Args:
+        results: WebSearchResponse or WebFetchResponse from ollama
+        user_search: The original query or URL used for the search/fetch
+    """
+    output = []
+    if isinstance(results, ollama.WebSearchResponse):
+        output.append(f'Search results for "{user_search}":')
+        for result in results.results:
+            output.append(f"{result.title}" if result.title else f"{result.content}")
+            output.append(f"   URL: {result.url}")
+            output.append(f"   Content: {result.content}")
+            output.append("")
+        return "\n".join(output).rstrip()
+
+    elif isinstance(results, ollama.WebFetchResponse):
+        output.append(f'Fetch results for "{user_search}":')
+        output.extend(
+            [
+                f"Title: {results.title}",
+                f"URL: {user_search}" if user_search else "",
+                f"Content: {results.content}",
+            ]
+        )
+        if results.links:
+            output.append(f'Links: {", ".join(results.links)}')
+        output.append("")
+        return "\n".join(output).rstrip()
+
+    # Fallback for unexpected types
+    return str(results)
+
 
 # ----------------------------
 # Ollama Response Streaming with Function Handling and History
@@ -249,8 +294,18 @@ class OllamaEventHandler(AIAgentEventHandler):
                 chat_params["options"] = self.model_options
 
             # Add tools if available
+            # Copy tools list to avoid mutating model_setting on repeated calls
             if "tools" in self.model_setting:
-                chat_params["tools"] = self.model_setting["tools"]
+                chat_params["tools"] = list(self.model_setting["tools"])
+
+            # Append built-in search tools (web_fetch, web_search) when search is enabled
+            if "web_tools_enabled" in self.model_setting:
+                if "tools" not in chat_params:
+                    chat_params["tools"] = []
+                if self.model_setting["web_tools_enabled"].get("web_search", False):
+                    chat_params["tools"].append(SEARCH_TOOLS["web_search"])
+                if self.model_setting["web_tools_enabled"].get("web_fetch", False):
+                    chat_params["tools"].append(SEARCH_TOOLS["web_fetch"])
 
             # Add format option using cached value (performance optimization)
             if self.output_format_type == "json_object":
@@ -263,15 +318,12 @@ class OllamaEventHandler(AIAgentEventHandler):
 
             # Add reasoning/thinking parameter - must explicitly set False to
             # disable, since Ollama enables thinking by default for supported models
+            chat_params["think"] = False  # Default to False for backward compatibility
             reasoning_config = self.model_setting.get("reasoning", {})
             if isinstance(reasoning_config, dict) and reasoning_config.get("enabled"):
                 chat_params["think"] = True
-                if self.logger.isEnabledFor(logging.INFO):
-                    self.logger.info("[invoke_model] Reasoning enabled, think=True")
-            else:
-                chat_params["think"] = False
-                if self.logger.isEnabledFor(logging.INFO):
-                    self.logger.info("[invoke_model] Reasoning disabled, think=False")
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("[invoke_model] Reasoning enabled, think=True")
 
             # Return streaming or non-streaming response
             if kwargs["stream"]:
@@ -457,7 +509,23 @@ class OllamaEventHandler(AIAgentEventHandler):
                     f"[handle_function_call] Executing function {function_name} with arguments {arguments}"
                 )
 
-            function_output = self._execute_function(function_call_data, arguments)
+            # Handle built-in search tools (web_fetch, web_search) separately
+            # from user-defined functions, with error handling for network failures
+            if function_name in SEARCH_TOOLS:
+                func = SEARCH_TOOLS[function_name]
+                try:
+                    result = func(**arguments)
+                    # Extract the query or URL used for the search/fetch
+                    user_search = arguments.get("query", "") or arguments.get("url", "")
+                    # Format results into structured text and cap at ~2000 tokens
+                    function_output = format_search_results(
+                        result, user_search=user_search
+                    )[:SEARCH_RESULT_MAX_CHARS]
+                except Exception as e:
+                    self.logger.error(f"Search tool {function_name} failed: {e}")
+                    function_output = f"Error: {function_name} failed - {str(e)}"
+            else:
+                function_output = self._execute_function(function_call_data, arguments)
 
             # Update conversation history
             if self.logger.isEnabledFor(logging.INFO):
@@ -851,9 +919,6 @@ class OllamaEventHandler(AIAgentEventHandler):
             message = chunk.get("message", {})
 
             # Check for reasoning/thinking in the chunk
-            self.logger.info(
-                f"reasoning config: {self.model_setting.get('reasoning', {})}"
-            )
             if self.model_setting.get("reasoning", {}).get("enabled") and (
                 "thinking" in message and message["thinking"]
             ):
