@@ -19,6 +19,7 @@ from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
 
+# Names of built-in Ollama web tools; actual methods are on self.client for auth
 WEB_TOOL_NAMES = {"web_fetch", "web_search"}
 
 # Maximum characters for search tool results (~2000 tokens)
