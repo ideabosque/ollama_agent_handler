@@ -19,10 +19,7 @@ from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
 
-SEARCH_TOOLS = {
-    "web_fetch": ollama.web_fetch,
-    "web_search": ollama.web_search,
-}
+SEARCH_TOOL_NAMES = {"web_fetch", "web_search"}
 
 # Maximum characters for search tool results (~2000 tokens)
 SEARCH_RESULT_MAX_CHARS = 2000 * 4
@@ -298,14 +295,15 @@ class OllamaEventHandler(AIAgentEventHandler):
             if "tools" in self.model_setting:
                 chat_params["tools"] = list(self.model_setting["tools"])
 
-            # Append built-in search tools (web_fetch, web_search) when search is enabled
+            # Append built-in search tools (web_fetch, web_search) when enabled.
+            # Uses self.client methods so auth headers are included.
             if "web_tools_enabled" in self.model_setting:
                 if "tools" not in chat_params:
                     chat_params["tools"] = []
                 if self.model_setting["web_tools_enabled"].get("web_search", False):
-                    chat_params["tools"].append(SEARCH_TOOLS["web_search"])
+                    chat_params["tools"].append(self.client.web_search)
                 if self.model_setting["web_tools_enabled"].get("web_fetch", False):
-                    chat_params["tools"].append(SEARCH_TOOLS["web_fetch"])
+                    chat_params["tools"].append(self.client.web_fetch)
 
             # Add format option using cached value (performance optimization)
             if self.output_format_type == "json_object":
@@ -510,9 +508,9 @@ class OllamaEventHandler(AIAgentEventHandler):
                 )
 
             # Handle built-in search tools (web_fetch, web_search) separately
-            # from user-defined functions, with error handling for network failures
-            if function_name in SEARCH_TOOLS:
-                func = SEARCH_TOOLS[function_name]
+            # from user-defined functions. Uses self.client for auth headers.
+            if function_name in SEARCH_TOOL_NAMES:
+                func = getattr(self.client, function_name)
                 try:
                     result = func(**arguments)
                     # Extract the query or URL used for the search/fetch
