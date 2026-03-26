@@ -160,17 +160,23 @@ class OllamaEventHandler(AIAgentEventHandler):
         self, input_messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Filters out broken tool interaction sequences from message history.
-        Valid sequences: assistant (with tool_calls) → tool results → assistant (final response).
-        Removes tool results without proper initiation or sequences without completion.
+        Cleans up conversation history by handling broken tool interaction sequences.
 
-        Optimized to O(n) complexity with single-pass algorithm.
+        Valid tool sequence: assistant (with tool_calls) → tool result(s) → next message.
+        Handles two types of broken sequences:
+        1. Orphaned tool messages (no preceding assistant with tool_calls):
+           Extracts the tool output and merges it into the next assistant message
+           as [Tool call context], preserving search results and other tool data.
+        2. Assistant with tool_calls but no following tool results:
+           Skipped entirely as the sequence is incomplete.
+
+        Single-pass O(n) algorithm using an in_tool_sequence flag to track state.
 
         Args:
             input_messages: Raw conversation messages
 
         Returns:
-            Filtered messages containing only valid sequences
+            Cleaned messages with orphaned tool outputs merged into assistant responses
         """
         if self.logger.isEnabledFor(logging.INFO):
             self.logger.info(
@@ -182,55 +188,73 @@ class OllamaEventHandler(AIAgentEventHandler):
 
         result = []
         tool_call_role = self.agent["tool_call_role"]
+        # Track whether we're inside a valid tool call sequence
+        in_tool_sequence = False
+        # Collect orphaned tool outputs to merge into the next assistant message
+        orphaned_tool_outputs = []
         i = 0
 
         while i < len(input_messages):
             current_msg = input_messages[i]
             current_role = current_msg.get("role")
 
-            # Skip orphaned tool results (not preceded by assistant with tool_calls)
             if current_role == tool_call_role:
-                if not (
-                    result
-                    and result[-1].get("role") == "assistant"
-                    and "tool_calls" in result[-1]
-                ):
+                # Tool messages are only valid when preceded by an assistant
+                # message with tool_calls (either directly or via earlier tool
+                # messages in the same sequence).
+                if in_tool_sequence:
+                    result.append(current_msg)
+                else:
+                    # Extract output from orphaned tool message and save it
+                    # to merge into the next assistant response
+                    tool_output = self._extract_tool_output(current_msg)
+                    if tool_output:
+                        orphaned_tool_outputs.append(tool_output)
                     if self.logger.isEnabledFor(logging.INFO):
                         self.logger.info(
-                            f"[_cleanup_input_messages] Skipping orphaned tool at [{i}]"
+                            f"[_cleanup_input_messages] Orphaned tool at [{i}], merging output into next assistant message"
                         )
-                    i += 1
-                    continue
-                result.append(current_msg)
                 i += 1
                 continue
 
-            # Handle assistant messages with tool_calls
+            # When a non-tool message arrives, end any active tool sequence
+            in_tool_sequence = False
+
             if current_role == "assistant" and "tool_calls" in current_msg:
-                # Find the end of tool results sequence
+                # Look ahead: valid sequence needs at least one tool result
                 j = i + 1
-                while (
+                has_tool_results = (
                     j < len(input_messages)
                     and input_messages[j].get("role") == tool_call_role
-                ):
-                    j += 1
+                )
 
-                # Check if sequence is complete (followed by assistant message)
-                if (
-                    j < len(input_messages)
-                    and input_messages[j].get("role") == "assistant"
-                ):
-                    # Valid sequence: include the tool caller
+                if has_tool_results:
+                    # Valid start of tool call sequence
                     result.append(current_msg)
+                    in_tool_sequence = True
                     i += 1
                 else:
-                    # Incomplete sequence: skip entire cycle
+                    # Assistant with tool_calls but no tool results follow — skip
                     if self.logger.isEnabledFor(logging.INFO):
                         self.logger.info(
-                            f"[_cleanup_input_messages] Skipping incomplete cycle [{i}:{j - 1}]"
+                            f"[_cleanup_input_messages] Skipping assistant with tool_calls but no tool results at [{i}]"
                         )
-                    i = j
+                    i += 1
                 continue
+
+            # Merge orphaned tool outputs into the next assistant message
+            if current_role == "assistant" and orphaned_tool_outputs:
+                current_msg = dict(current_msg)  # avoid mutating original
+                merged_context = "\n\n".join(orphaned_tool_outputs)
+                current_msg["content"] = (
+                    f"[Tool call context]\n{merged_context}\n\n"
+                    f"[Response]\n{current_msg.get('content', '')}"
+                )
+                orphaned_tool_outputs.clear()
+                if self.logger.isEnabledFor(logging.INFO):
+                    self.logger.info(
+                        f"[_cleanup_input_messages] Merged orphaned tool outputs into assistant message at [{i}]"
+                    )
 
             # Regular messages (user, assistant without tool_calls)
             result.append(current_msg)
@@ -240,8 +264,32 @@ class OllamaEventHandler(AIAgentEventHandler):
             self.logger.info(
                 f"[_cleanup_input_messages] Retained {len(result)} messages"
             )
-
         return result
+
+    @staticmethod
+    def _extract_tool_output(tool_msg: Dict[str, Any]) -> Optional[str]:
+        """
+        Extract the output from a tool message.
+        Tool message content can be either a JSON string (with tool/output fields)
+        or a plain string.
+        """
+        content = tool_msg.get("content", "")
+        if not content:
+            return None
+
+        try:
+            parsed = (
+                Serializer.json_loads(content) if isinstance(content, str) else content
+            )
+            if isinstance(parsed, dict):
+                tool_info = parsed.get("tool", {})
+                tool_name = tool_info.get("name", "unknown")
+                output = parsed.get("output", "")
+                if output:
+                    return f"[{tool_name}]: {output}"
+            return content
+        except Exception:
+            return content
 
     def _get_elapsed_time(self) -> float:
         """
