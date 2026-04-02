@@ -241,14 +241,14 @@ class OllamaEventHandler(AIAgentEventHandler):
                     i += 1
                 continue
 
-            # Flush orphaned tool outputs as a user message with context.
+            # Flush orphaned tool outputs as a system message with context.
             # Cannot use "tool" role here since there's no preceding assistant
             # with tool_calls — Ollama rejects orphaned tool messages with 500.
             if orphaned_tool_outputs:
                 merged_context = "\n\n".join(orphaned_tool_outputs)
                 result.append(
                     {
-                        "role": "user",
+                        "role": "system",
                         "content": f"[Previous tool call results]\n{merged_context}",
                     }
                 )
