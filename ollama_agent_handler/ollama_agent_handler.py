@@ -92,10 +92,11 @@ class OllamaEventHandler(AIAgentEventHandler):
         """
         AIAgentEventHandler.__init__(self, logger, agent, **setting)
 
+        self.shorten_initial_system_prompt = setting.get(
+            "shorten_initial_system_prompt", True
+        )
         # Enable timeline logging (default: False)
         self.enable_timeline_log = setting.get("enable_timeline_log", False)
-
-        self.system_message = {"role": "system", "content": agent["instructions"]}
 
         if "enabled_tools" in self.agent["configuration"]:
             # Add tools if available - matching example.py structure
@@ -190,7 +191,7 @@ class OllamaEventHandler(AIAgentEventHandler):
         tool_call_role = self.agent["tool_call_role"]
         # Track whether we're inside a valid tool call sequence
         in_tool_sequence = False
-        # Collect orphaned tool outputs to merge into the next assistant message
+        # Collect orphaned tool outputs to merge into a single tool message
         orphaned_tool_outputs = []
         i = 0
 
@@ -205,14 +206,13 @@ class OllamaEventHandler(AIAgentEventHandler):
                 if in_tool_sequence:
                     result.append(current_msg)
                 else:
-                    # Extract output from orphaned tool message and save it
-                    # to merge into the next assistant response
+                    # Extract output from orphaned tool message to merge later
                     tool_output = self._extract_tool_output(current_msg)
                     if tool_output:
                         orphaned_tool_outputs.append(tool_output)
                     if self.logger.isEnabledFor(logging.INFO):
                         self.logger.info(
-                            f"[_cleanup_input_messages] Orphaned tool at [{i}], merging output into next assistant message"
+                            f"[_cleanup_input_messages] Orphaned tool at [{i}], collecting output"
                         )
                 i += 1
                 continue
@@ -242,23 +242,41 @@ class OllamaEventHandler(AIAgentEventHandler):
                     i += 1
                 continue
 
-            # Merge orphaned tool outputs into the next assistant message
-            if current_role == "assistant" and orphaned_tool_outputs:
-                current_msg = dict(current_msg)  # avoid mutating original
+            # Flush orphaned tool outputs as a user message with context.
+            # Cannot use "tool" role here since there's no preceding assistant
+            # with tool_calls — Ollama rejects orphaned tool messages with 500.
+            if orphaned_tool_outputs:
                 merged_context = "\n\n".join(orphaned_tool_outputs)
-                current_msg["content"] = (
-                    f"[Tool call context]\n{merged_context}\n\n"
-                    f"[Response]\n{current_msg.get('content', '')}"
+                result.append(
+                    {
+                        "role": "user",
+                        "content": f"[Previous tool call results]\n{merged_context}",
+                    }
                 )
-                orphaned_tool_outputs.clear()
                 if self.logger.isEnabledFor(logging.INFO):
                     self.logger.info(
-                        f"[_cleanup_input_messages] Merged orphaned tool outputs into assistant message at [{i}]"
+                        f"[_cleanup_input_messages] Inserted merged tool context as user message with {len(orphaned_tool_outputs)} outputs before [{i}]"
                     )
+                orphaned_tool_outputs.clear()
 
             # Regular messages (user, assistant without tool_calls)
             result.append(current_msg)
             i += 1
+
+        # Flush any remaining orphaned tool outputs at end of messages
+        if orphaned_tool_outputs:
+            merged_context = "\n\n".join(orphaned_tool_outputs)
+            result.append(
+                {
+                    "role": "system",
+                    "content": f"[Previous tool call results]\n{merged_context}",
+                }
+            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    f"[_cleanup_input_messages] Inserted merged tool context as user message with {len(orphaned_tool_outputs)} outputs at end"
+                )
+            orphaned_tool_outputs.clear()
 
         if self.logger.isEnabledFor(logging.INFO):
             self.logger.info(
@@ -302,6 +320,28 @@ class OllamaEventHandler(AIAgentEventHandler):
             return 0.0
         return (pendulum.now("UTC") - self._global_start_time).total_seconds() * 1000
 
+    def _get_system_instruction(self, message_count: int) -> str:
+        """
+        Return the appropriate system instruction based on conversation length.
+
+        Single message (first/single call) uses a lightweight prompt;
+        continuation calls (2+ messages) use the full agent instructions.
+
+        Args:
+            message_count: Total number of messages in the conversation
+
+        Returns:
+            The system instruction string
+        """
+        if message_count > 1:
+            return self.agent["instructions"]
+        if self.shorten_initial_system_prompt:
+            return (
+                f"You are a helpful {self.agent.get('agent_name', 'assistant')}"
+                f" with the instructions: {self.agent.get('agent_description', '')}."
+            )
+        return self.agent["instructions"]
+
     def reset_timeline(self) -> None:
         """
         Reset the global timeline for a new run.
@@ -326,8 +366,15 @@ class OllamaEventHandler(AIAgentEventHandler):
         """
         try:
             invoke_start = pendulum.now("UTC")
-            # Build messages list more efficiently
-            messages = [self.system_message] + kwargs.get("input_messages", [])
+            # Build messages list with system instruction as proper message dict
+            messages = [
+                {
+                    "role": "system",
+                    "content": self._get_system_instruction(
+                        len(kwargs.get("input_messages", []))
+                    ),
+                }
+            ] + kwargs.get("input_messages", [])
 
             # Prepare chat parameters
             chat_params = {
@@ -375,6 +422,11 @@ class OllamaEventHandler(AIAgentEventHandler):
             # Return streaming or non-streaming response
             if kwargs["stream"]:
                 chat_params["stream"] = True
+
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(
+                    f"[invoke_model] Sending messages: {Serializer.json_dumps(chat_params.get('messages', []))}"
+                )
 
             result = self.client.chat(**chat_params)
 
@@ -864,8 +916,15 @@ class OllamaEventHandler(AIAgentEventHandler):
                 self.final_output["reasoning_summary"] = "Error processing reasoning"
 
         # Scenario 1: Handle function calls
+        # Convert Pydantic objects to plain dicts so they can be serialized
+        # back into messages for the next ollama.chat() call
         if "tool_calls" in message and message["tool_calls"]:
-            tool_calls = message["tool_calls"]
+            tool_calls = []
+            for tc in message["tool_calls"]:
+                tc = tc if isinstance(tc, dict) else dict(tc)
+                if "function" in tc and not isinstance(tc["function"], dict):
+                    tc["function"] = dict(tc["function"])
+                tool_calls.append(tc)
 
             # First, append the assistant's message with tool_calls
             input_messages.append(
@@ -1020,10 +1079,14 @@ class OllamaEventHandler(AIAgentEventHandler):
                     self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Reasoning ended")
 
             # Check for tool calls in streaming chunks (Ollama v0.8.0+)
+            # Convert Pydantic objects to plain dicts so they can be serialized
+            # back into messages for the next ollama.chat() call
             if "tool_calls" in message and message["tool_calls"]:
                 for tool_call in message["tool_calls"]:
-                    # Accumulate tool calls to handle them at the end
-                    accumulated_tool_calls.append(tool_call)
+                    tc = tool_call if isinstance(tool_call, dict) else dict(tool_call)
+                    if "function" in tc and not isinstance(tc["function"], dict):
+                        tc["function"] = dict(tc["function"])
+                    accumulated_tool_calls.append(tc)
                     received_any_content = True
 
             # Get the content from the chunk
