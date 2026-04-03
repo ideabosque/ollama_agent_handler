@@ -92,9 +92,6 @@ class OllamaEventHandler(AIAgentEventHandler):
         """
         AIAgentEventHandler.__init__(self, logger, agent, **setting)
 
-        self.shorten_initial_system_prompt = setting.get(
-            "shorten_initial_system_prompt", True
-        )
         # Enable timeline logging (default: False)
         self.enable_timeline_log = setting.get("enable_timeline_log", False)
 
@@ -320,28 +317,6 @@ class OllamaEventHandler(AIAgentEventHandler):
             return 0.0
         return (pendulum.now("UTC") - self._global_start_time).total_seconds() * 1000
 
-    def _get_system_instruction(self, message_count: int) -> str:
-        """
-        Return the appropriate system instruction based on conversation length.
-
-        Single message (first/single call) uses a lightweight prompt;
-        continuation calls (2+ messages) use the full agent instructions.
-
-        Args:
-            message_count: Total number of messages in the conversation
-
-        Returns:
-            The system instruction string
-        """
-        if message_count > 1:
-            return self.agent["instructions"]
-        if self.shorten_initial_system_prompt:
-            return (
-                f"You are a helpful {self.agent.get('agent_name', 'assistant')}"
-                f" with the instructions: {self.agent.get('agent_description', '')}."
-            )
-        return self.agent["instructions"]
-
     def reset_timeline(self) -> None:
         """
         Reset the global timeline for a new run.
@@ -370,9 +345,7 @@ class OllamaEventHandler(AIAgentEventHandler):
             messages = [
                 {
                     "role": "system",
-                    "content": self._get_system_instruction(
-                        len(kwargs.get("input_messages", []))
-                    ),
+                    "content": self.agent["instructions"],
                 }
             ] + kwargs.get("input_messages", [])
 
